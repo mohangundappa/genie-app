@@ -3,6 +3,7 @@ import os
 import re
 from openai import OpenAI
 from app.database import get_schema_for_prompt, get_setting
+from app.semantic_layer import get_semantic_context_for_prompt, find_trusted_query
 
 
 SYSTEM_PROMPT = """You are an expert SQL analyst. You convert natural language questions into SQLite SQL queries.
@@ -10,6 +11,14 @@ SYSTEM_PROMPT = """You are an expert SQL analyst. You convert natural language q
 You have access to a SQLite database with the following schema:
 
 {schema}
+
+## Semantic Layer (Business Context)
+
+The following semantic layer provides business-friendly names, metric definitions, glossary terms, 
+pre-defined filters, and trusted SQL patterns. Use this context to correctly interpret business 
+terminology and generate accurate queries.
+
+{semantic_context}
 
 Rules:
 1. ONLY generate SELECT queries. Never generate INSERT, UPDATE, DELETE, DROP, or any DDL statements.
@@ -21,6 +30,9 @@ Rules:
 7. Use aggregation functions (SUM, AVG, COUNT, MIN, MAX) when appropriate.
 8. Use GROUP BY when aggregating across categories.
 9. Always alias computed columns for readability.
+10. When a user mentions a business term (e.g., "revenue", "headcount", "AOV"), refer to the Business Glossary and Metrics definitions above to map it to the correct column and expression.
+11. When a pre-defined filter matches the user's intent (e.g., "active employees", "low stock"), use the exact filter expression from the Semantic Layer.
+12. If a Trusted SQL Example closely matches the question, prefer using that pattern.
 
 Respond with a JSON object containing:
 - "sql": The SQL query string
@@ -45,12 +57,23 @@ def get_model() -> str:
 
 
 def nl_to_sql(question: str, schema: str) -> dict:
+    # First, check if there's a trusted query that matches
+    trusted = find_trusted_query(question)
+    if trusted:
+        return {
+            "sql": trusted["sql_query"],
+            "explanation": f"[Trusted Query] {trusted['description'] or 'Matched a curated query pattern'}",
+            "chart_config": _suggest_chart_for_trusted(trusted),
+            "error": None,
+        }
+
     client = get_openai_client()
     if not client:
         return handle_without_llm(question, schema)
 
     model = get_model()
-    prompt = SYSTEM_PROMPT.format(schema=schema)
+    semantic_context = get_semantic_context_for_prompt()
+    prompt = SYSTEM_PROMPT.format(schema=schema, semantic_context=semantic_context)
 
     try:
         response = client.chat.completions.create(
@@ -255,3 +278,22 @@ def _extract_number(q: str) -> int | None:
     import re
     match = re.search(r'\b(\d+)\b', q)
     return int(match.group(1)) if match else None
+
+
+def _suggest_chart_for_trusted(trusted: dict) -> dict | None:
+    """Suggest a chart config for a trusted query based on SQL analysis."""
+    sql = trusted["sql_query"].upper()
+    if "GROUP BY" not in sql:
+        return None
+    # Simple heuristic: if it has GROUP BY, suggest a bar chart
+    sql_lower = trusted["sql_query"].lower()
+    if "substr(order_date" in sql_lower or "month" in sql_lower:
+        chart_type = "line"
+    else:
+        chart_type = "bar"
+    return {
+        "chart_type": chart_type,
+        "x_axis": "",
+        "y_axis": [],
+        "chart_title": trusted.get("description", ""),
+    }

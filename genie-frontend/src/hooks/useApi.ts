@@ -63,5 +63,26 @@ export function useApi() {
 
     getSchema: () =>
       apiFetch<{ schema: string; tables: import("../types").Dataset[] }>("/api/schema"),
+
+    getSemanticLayer: () =>
+      apiFetch<import("../types").SemanticLayerSummary>("/api/semantic"),
+
+    getSemanticColumns: (tableName?: string) =>
+      apiFetch<{ columns: import("../types").SemanticColumnDescription[] }>(
+        `/api/semantic/columns${tableName ? `?table_name=${tableName}` : ""}`
+      ),
+
+    getSemanticMetrics: (tableName?: string) =>
+      apiFetch<{ metrics: import("../types").SemanticMetric[] }>(
+        `/api/semantic/metrics${tableName ? `?table_name=${tableName}` : ""}`
+      ),
+
+    getSemanticGlossary: () =>
+      apiFetch<{ glossary: import("../types").SemanticGlossaryEntry[] }>("/api/semantic/glossary"),
+
+    getSemanticTrustedQueries: (tableName?: string) =>
+      apiFetch<{ trusted_queries: import("../types").SemanticTrustedQuery[] }>(
+        `/api/semantic/trusted-queries${tableName ? `?table_name=${tableName}` : ""}`
+      ),
   };
 }

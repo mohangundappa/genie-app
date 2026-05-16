@@ -48,7 +48,7 @@ def init_db():
 def get_all_tables() -> list[dict]:
     with get_db() as conn:
         cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('query_history', 'settings')"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'semantic_%' AND name NOT IN ('query_history', 'settings')"
         )
         tables = []
         for row in cursor.fetchall():

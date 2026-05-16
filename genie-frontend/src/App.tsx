@@ -27,6 +27,7 @@ import { SqlDisplay } from "./components/SqlDisplay";
 import { DatasetExplorer } from "./components/DatasetExplorer";
 import { QueryHistory } from "./components/QueryHistory";
 import { SettingsModal } from "./components/SettingsModal";
+import { SemanticLayer } from "./components/SemanticLayer";
 import type { ConversationMessage, SuggestedQuestion } from "./types";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
@@ -40,7 +41,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   "pie-chart": <PieChart className="w-4 h-4" />,
 };
 
-type SidebarTab = "datasets" | "history";
+type SidebarTab = "datasets" | "history" | "semantic";
 
 function App() {
   const api = useApi();
@@ -162,6 +163,17 @@ function App() {
             <History className="w-3.5 h-3.5" />
             History
           </button>
+          <button
+            onClick={() => setSidebarTab("semantic")}
+            className={`flex-1 py-2.5 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+              sidebarTab === "semantic"
+                ? "text-indigo-400 border-b-2 border-indigo-400"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Semantic
+          </button>
         </div>
 
         {/* Sidebar Content */}
@@ -173,8 +185,10 @@ function App() {
                 inputRef.current?.focus();
               }}
             />
-          ) : (
+          ) : sidebarTab === "history" ? (
             <QueryHistory onSelectQuery={(q) => handleSubmit(q)} />
+          ) : (
+            <SemanticLayer onAskQuestion={(q) => handleSubmit(q)} />
           )}
         </div>
 

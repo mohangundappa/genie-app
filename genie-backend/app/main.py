@@ -19,6 +19,23 @@ from app.database import (
 )
 from app.models import AskRequest, AskResponse, SettingsUpdate
 from app.nl_to_sql import nl_to_sql
+from app.semantic_layer import (
+    init_semantic_layer,
+    get_full_semantic_summary,
+    get_column_descriptions,
+    get_glossary,
+    get_metrics,
+    get_dimensions,
+    get_filters,
+    get_joins,
+    get_trusted_queries,
+    upsert_glossary_entry,
+    upsert_metric,
+    upsert_trusted_query,
+    delete_glossary_entry,
+    delete_metric,
+    delete_trusted_query,
+)
 
 load_dotenv()
 
@@ -26,6 +43,7 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    init_semantic_layer()
     yield
 
 
@@ -183,3 +201,101 @@ async def get_suggested_questions():
 @app.get("/api/schema")
 async def get_full_schema():
     return {"schema": get_schema_for_prompt(), "tables": get_all_tables()}
+
+
+# ---------------------------------------------------------------------------
+# Semantic Layer endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/semantic")
+async def get_semantic_layer():
+    return get_full_semantic_summary()
+
+
+@app.get("/api/semantic/columns")
+async def get_semantic_columns(table_name: str | None = None):
+    return {"columns": get_column_descriptions(table_name)}
+
+
+@app.get("/api/semantic/glossary")
+async def get_semantic_glossary():
+    return {"glossary": get_glossary()}
+
+
+@app.post("/api/semantic/glossary")
+async def add_glossary_entry(payload: dict):
+    upsert_glossary_entry(
+        term=payload["term"],
+        definition=payload["definition"],
+        mapped_table=payload.get("mapped_table"),
+        mapped_column=payload.get("mapped_column"),
+        synonyms=payload.get("synonyms"),
+    )
+    return {"status": "ok"}
+
+
+@app.delete("/api/semantic/glossary/{term}")
+async def remove_glossary_entry(term: str):
+    delete_glossary_entry(term)
+    return {"status": "ok"}
+
+
+@app.get("/api/semantic/metrics")
+async def get_semantic_metrics(table_name: str | None = None):
+    return {"metrics": get_metrics(table_name)}
+
+
+@app.post("/api/semantic/metrics")
+async def add_metric(payload: dict):
+    upsert_metric(
+        name=payload["name"],
+        description=payload["description"],
+        table_name=payload["table_name"],
+        expression=payload["expression"],
+        format_type=payload.get("format_type", "number"),
+    )
+    return {"status": "ok"}
+
+
+@app.delete("/api/semantic/metrics/{name}")
+async def remove_metric(name: str, table_name: str):
+    delete_metric(name, table_name)
+    return {"status": "ok"}
+
+
+@app.get("/api/semantic/dimensions")
+async def get_semantic_dimensions(table_name: str | None = None):
+    return {"dimensions": get_dimensions(table_name)}
+
+
+@app.get("/api/semantic/filters")
+async def get_semantic_filters(table_name: str | None = None):
+    return {"filters": get_filters(table_name)}
+
+
+@app.get("/api/semantic/joins")
+async def get_semantic_joins():
+    return {"joins": get_joins()}
+
+
+@app.get("/api/semantic/trusted-queries")
+async def get_semantic_trusted_queries(table_name: str | None = None):
+    return {"trusted_queries": get_trusted_queries(table_name)}
+
+
+@app.post("/api/semantic/trusted-queries")
+async def add_trusted_query(payload: dict):
+    upsert_trusted_query(
+        question=payload["question"],
+        sql_query=payload["sql_query"],
+        description=payload.get("description"),
+        table_name=payload.get("table_name"),
+        is_parameterized=payload.get("is_parameterized", 0),
+    )
+    return {"status": "ok"}
+
+
+@app.delete("/api/semantic/trusted-queries")
+async def remove_trusted_query(question: str):
+    delete_trusted_query(question)
+    return {"status": "ok"}
