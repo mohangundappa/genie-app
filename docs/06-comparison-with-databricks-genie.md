@@ -20,11 +20,11 @@ Databricks Genie is an AI-powered assistant within the Databricks Lakehouse Plat
 |---------|-----------------|--------------------------|-----|
 | Natural language to SQL | Proprietary model, fine-tuned on SQL | OpenAI GPT + fallback pattern matcher | Quality gap for complex queries; our fallback covers basics |
 | Database support | Spark SQL, Unity Catalog | SQLite | Our approach is self-contained but limited to GBs, not TBs |
-| Schema awareness | Full catalog metadata, column descriptions, tags | Auto-generated from live schema | No column descriptions or semantic annotations |
+| Schema awareness | Full catalog metadata, column descriptions, tags | Semantic layer with column descriptions, business glossary, metrics, dimensions, filters, joins | Comparable metadata coverage for configured tables; no data lineage or automated discovery |
 | Chart suggestions | AI-driven, multiple chart types | LLM-suggested, 5 chart types | Similar approach, fewer chart options |
 | Conversation memory | Multi-turn with context | Single-turn (each question is independent) | Significant UX gap for follow-up questions |
 | Authentication | SCIM, SSO, RBAC | None | Production requirement, not implemented |
-| Trusted assets | Admin-curated queries and instructions | Suggested questions (hardcoded) | No admin curation workflow |
+| Trusted assets | Admin-curated queries and instructions | Trusted queries with fuzzy matching + semantic layer metadata | Similar concept; admin UI for curation is API-only (no dedicated admin panel yet) |
 | Query governance | Audit logs, query review, cost controls | Query history only | No governance framework |
 | Data scale | Petabytes (Spark clusters) | Megabytes (SQLite) | Different target use cases |
 | Deployment | Databricks workspace (managed) | Self-hosted (Fly.io) | More control, more operational burden |
@@ -53,7 +53,7 @@ Databricks Genie is an AI-powered assistant within the Databricks Lakehouse Plat
 |---------|----------------|----------|
 | Multi-turn conversations | Medium | Pass conversation history to LLM; add session management |
 | Authentication & RBAC | High | Integrate OAuth 2.0; per-user permissions on datasets |
-| Column descriptions / metadata | Low | Add a `column_descriptions` table; include in LLM prompt |
+| ~~Column descriptions / metadata~~ | ~~Low~~ | ~~Add a `column_descriptions` table; include in LLM prompt~~ **DONE** — Semantic layer with 7 tables (column descriptions, glossary, metrics, dimensions, filters, joins, trusted queries) now included in LLM prompts |
 | Query caching | Low | Cache LLM responses keyed by (question, schema_hash) |
 | Streaming responses | Medium | Use OpenAI streaming API + SSE to show SQL as it's generated |
 | Data connectors | High | Add connectors for PostgreSQL, MySQL, Snowflake, BigQuery |
@@ -67,7 +67,7 @@ Databricks Genie is an AI-powered assistant within the Databricks Lakehouse Plat
 | Query suggestions based on schema | Medium | LLM generates likely questions from table metadata |
 | Export (CSV, Excel, PDF) | Low | Server-side export endpoints |
 | Collaborative annotations | Medium | Shared notes on queries/charts |
-| Admin panel for trusted queries | Medium | CRUD UI for curated query templates |
+| Admin panel for trusted queries | Medium | CRUD API exists; needs a dedicated admin UI (currently browsable in Semantic sidebar tab) |
 
 ---
 
@@ -85,10 +85,11 @@ User → Genie UI → Proprietary NL model → Spark SQL → Delta Lake → Resu
 
 ### Data Genie's architecture
 ```
-User → React Chat UI → OpenAI API → SQLite Query → Results → Recharts
-              ↑               ↑
-         Schema auto-gen    Fallback pattern
-         (from live DB)     matcher (no API needed)
+User → React Chat UI → Trusted Query Match? → [yes] → Curated SQL → Results → Recharts
+              ↑               ↓ [no]
+         Schema auto-gen    OpenAI API (with semantic context) → SQLite Query → Results
+         + Semantic Layer         ↑
+         (from live DB)     Fallback pattern matcher (no API needed)
 ```
 
 ### Key architectural trade-off

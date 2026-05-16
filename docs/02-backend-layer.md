@@ -44,9 +44,10 @@
 - No native JSON column type (though SQLite has JSON functions).
 
 ### Schema design decisions
-- **Separate system tables** (`query_history`, `settings`) from data tables. The `get_all_tables()` function explicitly excludes system tables so the LLM only sees relevant data schemas.
+- **Separate system tables** (`query_history`, `settings`) and **semantic layer tables** (`semantic_*`) from data tables. The `get_all_tables()` function explicitly excludes both system and semantic tables so the LLM only sees relevant data schemas.
 - **TEXT dates** (ISO 8601 format) instead of SQLite's lack of a native DATE type. This simplifies date filtering in generated SQL (`WHERE order_date >= '2024-01-01'`).
 - **No foreign keys between datasets** — each dataset is self-contained. This avoids JOIN complexity in the NL-to-SQL layer, which is the hardest part of text-to-SQL.
+- **Semantic layer stored in SQLite** — 7 dedicated `semantic_*` tables store column descriptions, glossary terms, metrics, dimensions, filters, joins, and trusted queries. Co-locating this metadata with the data ensures consistency and simplifies deployment (single DB file). See [08-semantic-layer.md](./08-semantic-layer.md) for details.
 
 ---
 
@@ -65,6 +66,14 @@
 | `/api/settings` | GET/POST | Read/update settings | API key management. GET never returns the full key (security). |
 | `/api/suggested-questions` | GET | Curated starter questions | Improves onboarding UX. Hardcoded for speed; could be dynamic in future. |
 | `/api/schema` | GET | Full schema as text | Useful for debugging or advanced users who want to see what the LLM sees. |
+| `/api/semantic` | GET | Full semantic layer summary | Returns all semantic metadata (columns, glossary, metrics, dimensions, filters, joins, trusted queries) in one call. Powers the frontend Semantic tab. |
+| `/api/semantic/columns` | GET | Column descriptions | Filterable by `table_name`. Includes business names and data formats. |
+| `/api/semantic/glossary` | GET/POST/DELETE | Business glossary CRUD | Maps business terms to table/column references with synonyms. |
+| `/api/semantic/metrics` | GET/POST/DELETE | Metric definitions CRUD | Pre-defined SQL expressions (e.g., `SUM(total_amount)` for "Total Revenue"). |
+| `/api/semantic/dimensions` | GET | Dimension columns | Common GROUP BY columns per table. |
+| `/api/semantic/filters` | GET | Pre-defined filters | Ready-made WHERE clauses (e.g., "Active Employees", "Low Stock"). |
+| `/api/semantic/joins` | GET | Join relationships | How tables relate to each other (e.g., sales_orders to product_inventory). |
+| `/api/semantic/trusted-queries` | GET/POST/DELETE | Trusted SQL queries CRUD | Curated SQL for common questions — matched before calling the LLM. |
 
 ### Trade-offs in API design
 
@@ -73,6 +82,8 @@
 2. **Read-only query restriction**: The `execute_query()` function rejects non-SELECT queries. This is a deliberate security boundary — the NL-to-SQL engine could theoretically generate destructive SQL. We chose safety over flexibility. Users who need write operations should use a proper database client.
 
 3. **Settings stored in DB vs. environment variables**: We support both. Environment variables are checked first (for deployment configuration), but the DB-backed settings allow runtime configuration through the UI without redeployment. The trade-off is that the API key is stored in plaintext in SQLite. For production, this should be encrypted or moved to a secrets manager.
+
+4. **Semantic layer as a single GET (`/api/semantic`)**: The full semantic summary is returned in one call to populate the frontend Semantic tab. Individual sub-endpoints (columns, glossary, metrics, etc.) exist for filtering and CRUD operations. This mirrors the monolithic `/api/ask` philosophy — prefer one round-trip for read-heavy operations.
 
 ---
 

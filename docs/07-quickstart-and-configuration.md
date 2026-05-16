@@ -21,6 +21,7 @@ poetry run fastapi dev app/main.py --port 8000
 The backend will:
 - Create a `genie.db` SQLite database file
 - Load all 4 sample datasets (world_countries, sales_orders, employees, product_inventory)
+- Initialize the semantic layer with metadata for all datasets (column descriptions, glossary, metrics, dimensions, filters, joins, trusted queries)
 - Start the API server at `http://localhost:8000`
 - Serve interactive API docs at `http://localhost:8000/docs`
 
@@ -108,6 +109,20 @@ The app works without an API key using a rule-based pattern matcher. You'll see 
 | `POST /api/settings` | `{"openai_api_key": "...", "openai_model": "..."}` | Update settings |
 | `GET /api/suggested-questions` | — | Curated starter questions |
 | `GET /api/schema` | — | Full database schema as text |
+| `GET /api/semantic` | — | Full semantic layer summary (columns, glossary, metrics, dimensions, filters, joins, trusted queries) |
+| `GET /api/semantic/columns?table_name=X` | — | Column descriptions (optional table filter) |
+| `GET /api/semantic/glossary` | — | Business glossary entries |
+| `POST /api/semantic/glossary` | `{"term": "...", "definition": "...", ...}` | Add/update glossary entry |
+| `DELETE /api/semantic/glossary/{term}` | — | Remove glossary entry |
+| `GET /api/semantic/metrics?table_name=X` | — | Metric definitions (optional table filter) |
+| `POST /api/semantic/metrics` | `{"name": "...", "expression": "...", ...}` | Add/update metric |
+| `DELETE /api/semantic/metrics/{name}?table_name=X` | — | Remove metric |
+| `GET /api/semantic/dimensions?table_name=X` | — | Dimension columns |
+| `GET /api/semantic/filters?table_name=X` | — | Pre-defined filters |
+| `GET /api/semantic/joins` | — | Join relationships |
+| `GET /api/semantic/trusted-queries?table_name=X` | — | Trusted SQL queries |
+| `POST /api/semantic/trusted-queries` | `{"question": "...", "sql_query": "...", ...}` | Add/update trusted query |
+| `DELETE /api/semantic/trusted-queries?question=X` | — | Remove trusted query |
 
 ---
 
@@ -121,6 +136,17 @@ To add your own dataset:
 4. Restart the backend — the new dataset will appear automatically in the sidebar.
 
 If using the LLM mode (with OpenAI API key), no changes to `nl_to_sql.py` are needed — the LLM reads the schema dynamically.
+
+### Adding Semantic Metadata for New Datasets
+
+After adding a dataset, enrich the semantic layer for better query accuracy:
+
+1. **Column descriptions**: Use the `POST /api/semantic/glossary` endpoint or add entries in `semantic_layer.py`'s `_seed_default_semantic_data()` function.
+2. **Metrics**: Define common aggregations (e.g., `SUM(amount)`, `AVG(score)`) via `POST /api/semantic/metrics`.
+3. **Trusted queries**: Add curated SQL for common questions via `POST /api/semantic/trusted-queries`.
+4. **Glossary**: Map business terms to columns via `POST /api/semantic/glossary`.
+
+See [08-semantic-layer.md](./08-semantic-layer.md) for full details on the semantic layer architecture.
 
 ---
 

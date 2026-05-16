@@ -110,6 +110,21 @@ We chose the chat-based approach because it aligns with the Databricks Genie men
   - Shows column types (helps users understand what questions to ask).
   - "Ask about this dataset" action button pre-fills the query input.
 
+#### `SemanticLayer.tsx` — Semantic Layer Browser
+- **Responsibility**: Browsable, searchable interface for all semantic layer metadata.
+- **Design decisions**:
+  - **Tabbed sub-navigation** (Columns, Glossary, Metrics, Filters, Joins, Queries) with item counts on each tab. Keeps the sidebar compact while providing access to all 7 entity types.
+  - **Search across all tabs**: A single search input filters the active tab's content by matching against names, descriptions, expressions, and synonyms.
+  - **Expandable table groups** in the Columns view: Column descriptions are grouped by table with collapsible sections, showing data format badges, dimension indicators, and business name aliases.
+  - **Clickable trusted queries**: Clicking a trusted query fires it as a question in the chat, providing a quick way to execute curated SQL.
+  - **Read-only browsing focus**: The frontend displays semantic metadata but doesn't yet offer inline editing (CRUD is available via API endpoints).
+
+| Alternative | Trade-off |
+|-------------|----------|
+| **Separate page/route** | Would give more space for editing but breaks the single-page chat UX. The sidebar tab approach keeps semantic browsing contextual alongside data exploration. |
+| **Inline editing in sidebar** | More convenient for power users but adds significant complexity (form validation, optimistic updates, error handling). Deferred to a future admin panel. |
+| **Modal-based browser** | Could show more detail but blocks the main chat area. The sidebar tab is less intrusive. |
+
 #### `SettingsModal.tsx` — Configuration
 - **Responsibility**: API key and model configuration.
 - **Security decision**: API key input uses `type="password"`. The GET endpoint only returns a masked preview (`sk-...xxxx`), never the full key.
@@ -128,7 +143,7 @@ The application state is simple:
 - `messages[]` — conversation history
 - `input` — current text input
 - `loading` — request in progress
-- `sidebarOpen`, `sidebarTab`, `settingsOpen` — UI state
+- `sidebarOpen`, `sidebarTab` ("datasets" | "history" | "semantic"), `settingsOpen` — UI state
 - `activeView` — table vs. chart toggle
 
 All state is local to `App.tsx` and flows down via props. No component needs to update state in a sibling without going through the parent.
@@ -152,6 +167,8 @@ All state is local to `App.tsx` and flows down via props. No component needs to 
 2. **Centralized error handling**: All API errors are caught and surfaced as chat messages. The user never sees a blank screen or unhandled exception.
 
 3. **Configurable base URL**: Reads from `VITE_API_URL` environment variable. This allows the same frontend code to point to localhost (development) or the deployed backend (production) without code changes.
+
+4. **Semantic layer methods**: The hook includes `getSemanticLayer()` (full summary), `getSemanticColumns()`, `getSemanticMetrics()`, `getSemanticGlossary()`, and `getSemanticTrustedQueries()` — each with optional `tableName` filtering. These power the Semantic sidebar tab.
 
 ---
 

@@ -4,8 +4,9 @@
 
 The NL-to-SQL engine is the core intelligence layer of Data Genie. It converts natural language questions like "What are the top 10 countries by GDP?" into executable SQL queries. The engine has two modes:
 
-1. **LLM mode** (when OpenAI API key is configured) — uses GPT models for accurate, context-aware SQL generation.
-2. **Fallback mode** (no API key) — uses rule-based pattern matching for basic queries.
+1. **Trusted query mode** — checks for a fuzzy match against curated SQL queries in the semantic layer. Instant result, no LLM call needed.
+2. **LLM mode** (when OpenAI API key is configured) — uses GPT models for accurate, context-aware SQL generation, enriched with semantic layer context.
+3. **Fallback mode** (no API key) — uses rule-based pattern matching for basic queries.
 
 ---
 
@@ -17,8 +18,9 @@ The NL-to-SQL engine is the core intelligence layer of Data Genie. It converts n
 System prompt structure:
 1. Role definition ("You are an expert SQL analyst")
 2. Full database schema (auto-generated from live DB)
-3. Strict rules (SELECT-only, SQLite syntax, date formats)
-4. Structured output format (JSON with sql, explanation, chart suggestion)
+3. Semantic layer context (column descriptions, glossary, metrics, dimensions, filters, joins, trusted queries)
+4. Strict rules (SELECT-only, SQLite syntax, date formats, use semantic layer terms)
+5. Structured output format (JSON with sql, explanation, chart suggestion)
 ```
 
 ### Why this prompt structure
@@ -26,10 +28,12 @@ System prompt structure:
 | Decision | Rationale | Trade-off |
 |----------|-----------|-----------|
 | **Schema in system prompt** | The LLM needs to know exact table/column names to generate valid SQL. Auto-generating from the live DB ensures the prompt is always in sync with the actual schema. | Consumes tokens proportional to schema size. For very large schemas (100+ tables), this would need chunking or RAG-based schema retrieval. |
+| **Semantic layer in system prompt** | Including column descriptions, business glossary, metric definitions, and pre-defined filters gives the LLM rich business context to correctly interpret terms like "revenue", "headcount", or "AOV". | Increases prompt token usage (~500-800 extra tokens). For very large semantic layers (100+ metrics), this would need relevance-based filtering or RAG retrieval. Currently acceptable for 4 tables. |
 | **JSON output format** | Structured output enables reliable parsing. The frontend needs separate fields (SQL, explanation, chart config) not a free-text blob. | Slightly more complex prompt. Occasionally the LLM wraps JSON in markdown code fences — we handle this with regex stripping. |
 | **Chart suggestion in same call** | Asking the LLM to suggest a visualization type alongside the SQL avoids a second API call. | The chart suggestion quality is "good enough" but not perfect. A dedicated visualization recommendation model would be more accurate but doubles latency and cost. |
 | **Temperature = 0** | Deterministic output. Same question should produce the same SQL every time. | Loses creative/alternative query approaches. Acceptable trade-off for consistency. |
 | **SELECT-only rule** | Safety boundary. Even if a user asks "delete all records", the LLM is instructed to refuse. | Limits functionality to read-only analytics. Write operations would need a separate, carefully guarded endpoint. |
+| **Trusted query matching before LLM** | Common questions get instant, curated SQL results without an LLM call. Reduces cost and latency for known question patterns. | Requires manual curation of trusted queries. Fuzzy matching may occasionally match incorrectly. Only covers pre-defined patterns. |
 
 ### Model Selection
 
@@ -50,6 +54,44 @@ System prompt structure:
 | **Local LLM (Ollama/llama.cpp)** | No API costs, full privacy. But requires GPU for acceptable speed, and SQL generation quality is significantly worse with smaller models. Not viable for a deployed web app. |
 | **Fine-tuned model** | Best SQL quality for our specific schema. But requires training data collection, ongoing maintenance, and hosting infrastructure. Massive overkill for a demo with 4 tables. |
 | **Specialized text-to-SQL models (NSQL, SQLCoder)** | Purpose-built for SQL generation, often competitive with GPT-4. But limited availability as APIs, harder to host, and don't provide chart suggestions or explanations. |
+
+---
+
+## Semantic Layer Integration
+
+The NL-to-SQL engine integrates with the semantic layer at two points:
+
+### 1. Trusted Query Matching (Pre-LLM)
+
+Before calling the LLM, the engine checks if the user's question matches a **trusted query** in the semantic layer. This uses fuzzy keyword matching — if 60%+ of the question's keywords overlap with a trusted query's keywords, it returns the curated SQL directly.
+
+```
+User: "Show total revenue by product category"
+  → Matches trusted query: "total sales by product category"
+  → Returns curated SQL instantly (no LLM call)
+```
+
+**Trade-off**: Fuzzy matching is simple but not perfect. It may miss semantically similar but lexically different questions ("What do we sell the most of?" won't match "total sales by category"). A semantic embedding-based matcher would be more accurate but adds complexity and latency.
+
+### 2. Prompt Enrichment (During LLM Call)
+
+When a question reaches the LLM, the system prompt includes a `## Semantic Layer (Business Context)` section containing:
+
+- **Column descriptions**: What each column means in business terms (e.g., `bonus_pct` = "Bonus percentage based on performance")
+- **Business glossary**: Term mappings with synonyms (e.g., "Revenue" → `sales_orders.total_amount`, synonyms: "sales, income, earnings")
+- **Metric definitions**: Pre-built SQL expressions (e.g., "Total Revenue" = `SUM(total_amount)`)
+- **Dimension columns**: Common GROUP BY candidates per table
+- **Pre-defined filters**: Ready-made WHERE clauses (e.g., "Active Employees" = `employment_status = 'Active'`)
+- **Join relationships**: How to correctly join tables (e.g., `sales_orders.product_name = product_inventory.product_name`)
+
+The LLM prompt includes 3 additional rules instructing it to:
+- Map business terms to the correct columns using the glossary
+- Use pre-defined filter expressions when applicable
+- Prefer trusted query patterns when they closely match
+
+**Trade-off**: Including the full semantic context increases prompt size by ~500-800 tokens. For our 4-table schema this is acceptable, but for a 100-table enterprise schema, the semantic context would need to be filtered by relevance (e.g., only include metadata for tables mentioned in the question).
+
+See [08-semantic-layer.md](./08-semantic-layer.md) for full architecture details.
 
 ---
 
@@ -136,3 +178,5 @@ The OpenAI API key is stored in plaintext in the SQLite `settings` table. This i
 3. **Query caching**: Cache LLM responses for identical questions to reduce cost and latency.
 4. **Multi-turn context**: Pass previous Q&A pairs to the LLM so users can ask follow-up questions ("now filter that by Asia").
 5. **Confidence scoring**: Have the LLM rate its confidence in the generated SQL, and show a warning for low-confidence queries.
+6. **Semantic embedding for trusted queries**: Replace keyword-based fuzzy matching with vector similarity for more accurate trusted query matching.
+7. **Auto-generated semantic metadata**: Use LLM to automatically generate column descriptions and glossary entries from data samples, reducing manual curation effort.
