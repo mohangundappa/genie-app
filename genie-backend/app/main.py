@@ -19,6 +19,12 @@ from app.database import (
 )
 from app.models import AskRequest, AskResponse, SettingsUpdate
 from app.nl_to_sql import nl_to_sql
+from app.compound_ai import (
+    run_compound_pipeline,
+    init_conversation_tables,
+    get_all_sessions,
+    get_conversation_history,
+)
 from app.semantic_layer import (
     init_semantic_layer,
     get_full_semantic_summary,
@@ -44,6 +50,7 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     init_db()
     init_semantic_layer()
+    init_conversation_tables()
     yield
 
 
@@ -92,56 +99,41 @@ async def get_dataset_sample(table_name: str, limit: int = 50):
 
 @app.post("/api/ask", response_model=AskResponse)
 async def ask_question(request: AskRequest):
-    schema = get_schema_for_prompt()
-    result = nl_to_sql(request.question, schema)
-
-    if result.get("error") and not result.get("sql"):
-        return AskResponse(
-            question=request.question,
-            sql_query="",
-            columns=[],
-            rows=[],
-            row_count=0,
-            chart_config=None,
-            explanation="",
-            error=result["error"],
-        )
-
-    sql = result["sql"]
-    query_result = execute_query(sql)
-
-    if query_result["error"]:
-        return AskResponse(
-            question=request.question,
-            sql_query=sql,
-            columns=[],
-            rows=[],
-            row_count=0,
-            chart_config=None,
-            explanation=result.get("explanation", ""),
-            error=query_result["error"],
-        )
-
-    chart_config = result.get("chart_config")
-    summary = f"Returned {query_result['row_count']} rows"
-
-    save_query_history(
+    # Use compound AI pipeline
+    result = run_compound_pipeline(
         question=request.question,
-        sql_query=sql,
-        result_summary=summary,
-        chart_config=json.dumps(chart_config) if chart_config else None,
-        dataset_name=request.dataset,
+        session_id=request.session_id,
     )
 
+    # Save to query history
+    if result.get("sql_query"):
+        summary = f"Returned {result['row_count']} rows"
+        save_query_history(
+            question=request.question,
+            sql_query=result["sql_query"],
+            result_summary=summary,
+            chart_config=json.dumps(result["chart_config"]) if result.get("chart_config") else None,
+            dataset_name=request.dataset,
+        )
+
     return AskResponse(
-        question=request.question,
-        sql_query=sql,
-        columns=query_result["columns"],
-        rows=query_result["rows"],
-        row_count=query_result["row_count"],
-        chart_config=chart_config,
-        explanation=result.get("explanation", ""),
-        error=None,
+        question=result["question"],
+        sql_query=result["sql_query"],
+        columns=result["columns"],
+        rows=result["rows"],
+        row_count=result["row_count"],
+        chart_config=result["chart_config"],
+        explanation=result["explanation"],
+        error=result["error"],
+        pipeline_stages=result["pipeline_stages"],
+        total_duration_ms=result["total_duration_ms"],
+        result_summary=result["result_summary"],
+        follow_ups=result["follow_ups"],
+        session_id=result["session_id"],
+        is_trusted=result["is_trusted"],
+        needs_clarification=result["needs_clarification"],
+        clarification=result["clarification"],
+        intent=result["intent"],
     )
 
 
@@ -201,6 +193,21 @@ async def get_suggested_questions():
 @app.get("/api/schema")
 async def get_full_schema():
     return {"schema": get_schema_for_prompt(), "tables": get_all_tables()}
+
+
+# ---------------------------------------------------------------------------
+# Conversation Session endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/sessions")
+async def list_sessions():
+    return {"sessions": get_all_sessions()}
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str):
+    messages = get_conversation_history(session_id)
+    return {"session_id": session_id, "messages": messages}
 
 
 # ---------------------------------------------------------------------------

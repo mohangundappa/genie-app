@@ -29,10 +29,10 @@ export function useApi() {
         `/api/datasets/${name}/sample?limit=${limit}`
       ),
 
-    askQuestion: (question: string, dataset?: string) =>
+    askQuestion: (question: string, dataset?: string, sessionId?: string) =>
       apiFetch<import("../types").AskResponse>("/api/ask", {
         method: "POST",
-        body: JSON.stringify({ question, dataset }),
+        body: JSON.stringify({ question, dataset, session_id: sessionId }),
       }),
 
     runQuery: (sql: string) =>
@@ -84,5 +84,22 @@ export function useApi() {
       apiFetch<{ trusted_queries: import("../types").SemanticTrustedQuery[] }>(
         `/api/semantic/trusted-queries${tableName ? `?table_name=${tableName}` : ""}`
       ),
+
+    getSessions: () =>
+      apiFetch<{
+        sessions: {
+          id: string;
+          created_at: string;
+          updated_at: string;
+          first_question: string;
+          message_count: number;
+        }[];
+      }>("/api/sessions"),
+
+    getSessionHistory: (sessionId: string) =>
+      apiFetch<{
+        session_id: string;
+        messages: { role: string; content: string; sql: string | null }[];
+      }>(`/api/sessions/${sessionId}`),
   };
 }

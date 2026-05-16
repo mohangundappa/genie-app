@@ -17,6 +17,13 @@ export interface ChartConfig {
   chart_title: string;
 }
 
+export interface PipelineStageInfo {
+  name: string;
+  status: string;
+  duration_ms: number;
+  output: Record<string, unknown>;
+}
+
 export interface AskResponse {
   question: string;
   sql_query: string;
@@ -26,6 +33,15 @@ export interface AskResponse {
   chart_config: ChartConfig | null;
   explanation: string;
   error: string | null;
+  pipeline_stages: PipelineStageInfo[];
+  total_duration_ms: number;
+  result_summary: string;
+  follow_ups: string[];
+  session_id: string | null;
+  is_trusted: boolean;
+  needs_clarification: boolean;
+  clarification: string | null;
+  intent: Record<string, unknown>;
 }
 
 export interface SuggestedQuestion {
