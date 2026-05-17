@@ -80,6 +80,13 @@
 | `/api/semantic/trusted-queries` | GET/POST/DELETE | Trusted SQL queries CRUD | Curated SQL for common questions — matched before calling the LLM. |
 | `/api/semantic/value-dictionary` | GET | Value dictionary entries | Auto-scanned categorical column values with frequency counts. Supports `?table_name=` filter. |
 | `/api/semantic/column-stats` | GET | Column statistics | Auto-profiled column stats (distinct count, min/max, null rate, cardinality). Supports `?table_name=` filter. |
+| `/api/semantic/instructions` | GET/POST/DELETE | Per-space instructions CRUD | Text rules injected into SQL generator prompt (global or dataset-scoped). |
+| `/api/feedback` | POST/GET | Feedback submission & listing | Thumbs up/down voting per response with optional comments. |
+| `/api/feedback/stats` | GET | Feedback accuracy stats | Accuracy %, upvote/downvote counts, recent feedback items. |
+| `/api/benchmark/cases` | GET/POST/DELETE | Benchmark case management | Define expected Q&A pairs for accuracy testing. |
+| `/api/benchmark/run` | POST | Run benchmark suite | Executes all cases through compound AI pipeline, compares results. |
+| `/api/benchmark/history` | GET | Benchmark run history | Past benchmark runs with accuracy trends. |
+| `/api/benchmark/runs/{id}` | GET | Benchmark run detail | Detailed per-case results for a specific run. |
 
 ### Trade-offs in API design
 

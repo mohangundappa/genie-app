@@ -93,10 +93,24 @@ def init_semantic_layer():
                 description TEXT,
                 table_name TEXT,
                 is_parameterized INTEGER DEFAULT 0,
+                parameters TEXT,
                 UNIQUE(question)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS semantic_instructions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instruction TEXT NOT NULL,
+                scope TEXT DEFAULT 'global',
+                dataset_name TEXT,
+                priority INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(instruction)
+            )
+        """)
     _seed_default_semantic_data()
+    _seed_default_instructions()
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +329,25 @@ def _seed_default_semantic_data():
             ("Compare GDP per capita across continents",
              "SELECT continent, ROUND(SUM(gdp_usd_billion * 1000000000.0) / SUM(population), 2) as gdp_per_capita FROM world_countries GROUP BY continent ORDER BY gdp_per_capita DESC",
              "GDP per capita by continent", "world_countries", 0),
+            # ---- Parameterized Trusted Queries ----
+            ("Show revenue for {region}",
+             "SELECT product_category, ROUND(SUM(total_amount), 2) as revenue FROM sales_orders WHERE region = '{region}' GROUP BY product_category ORDER BY revenue DESC",
+             "Revenue by product category for a specific region", "sales_orders", 1),
+            ("Show employees in {department}",
+             "SELECT first_name || ' ' || last_name as employee, job_title, salary, performance_rating FROM employees WHERE department = '{department}' AND employment_status = 'Active' ORDER BY salary DESC",
+             "Active employees in a specific department", "employees", 1),
+            ("What is the GDP of {country}",
+             "SELECT country, gdp_usd_billion, population, life_expectancy FROM world_countries WHERE country = '{country}'",
+             "Economic data for a specific country", "world_countries", 1),
+            ("Show {category} products",
+             "SELECT product_name, brand, unit_price, stock_quantity, rating FROM product_inventory WHERE category = '{category}' ORDER BY rating DESC",
+             "Products in a specific category", "product_inventory", 1),
+            ("Show revenue trend for {year}",
+             "SELECT substr(order_date,1,7) as month, ROUND(SUM(total_amount), 2) as revenue, COUNT(*) as orders FROM sales_orders WHERE order_date LIKE '{year}%' GROUP BY month ORDER BY month",
+             "Monthly revenue trend for a specific year", "sales_orders", 1),
+            ("Show {segment} customers by revenue",
+             "SELECT customer_name, COUNT(*) as orders, ROUND(SUM(total_amount), 2) as total_revenue FROM sales_orders WHERE customer_segment = '{segment}' GROUP BY customer_name ORDER BY total_revenue DESC",
+             "Customer ranking by revenue for a specific segment", "sales_orders", 1),
         ]
         conn.executemany(
             "INSERT OR IGNORE INTO semantic_trusted_queries (question, sql_query, description, table_name, is_parameterized) VALUES (?, ?, ?, ?, ?)",
@@ -515,15 +548,73 @@ def get_trusted_queries(table_name: str | None = None) -> list[dict]:
 
 
 def find_trusted_query(question: str) -> dict | None:
-    """Try to find a trusted query that closely matches the user's question."""
+    """Try to find a trusted query that closely matches the user's question.
+    
+    Supports parameterized trusted queries with {param} placeholders.
+    E.g., 'Show revenue for {region}' matches 'Show revenue for East'
+    and substitutes region='East' into the SQL template.
+    """
+    import re as _re
     with get_db() as conn:
         q_lower = question.lower().strip().rstrip("?").strip()
         rows = conn.execute("SELECT * FROM semantic_trusted_queries").fetchall()
+
+        # First pass: exact / substring match (non-parameterized)
         for row in rows:
+            if row["is_parameterized"]:
+                continue
             stored_q = row["question"].lower().strip().rstrip("?").strip()
             if q_lower == stored_q or q_lower in stored_q or stored_q in q_lower:
                 return dict(row)
+
+        # Second pass: parameterized pattern match
+        for row in rows:
+            if not row["is_parameterized"]:
+                continue
+            result = _match_parameterized_query(row, q_lower)
+            if result:
+                return result
+
         return None
+
+
+def _match_parameterized_query(row: dict, q_lower: str) -> dict | None:
+    """Try to match a parameterized trusted query against the user question."""
+    import re as _re
+    template_q = row["question"].lower().strip().rstrip("?").strip()
+    sql_template = row["sql_query"]
+
+    # Extract parameter names from template: {region}, {category}, etc.
+    param_names = _re.findall(r"\{(\w+)\}", template_q)
+    if not param_names:
+        return None
+
+    # Build regex pattern from template
+    pattern = _re.escape(template_q)
+    for param in param_names:
+        pattern = pattern.replace(_re.escape("{" + param + "}"), r"(.+?)")
+    pattern = "^" + pattern + "$"
+
+    match = _re.match(pattern, q_lower)
+    if not match:
+        return None
+
+    # Extract parameter values
+    param_values = {}
+    for i, param in enumerate(param_names):
+        param_values[param] = match.group(i + 1).strip()
+
+    # Substitute into SQL template
+    resolved_sql = sql_template
+    for param, value in param_values.items():
+        # Use title case for SQL values (e.g., 'east' -> 'East')
+        resolved_sql = resolved_sql.replace("{" + param + "}", value.title())
+
+    result = dict(row)
+    result["sql_query"] = resolved_sql
+    result["resolved_parameters"] = param_values
+    result["description"] = (result.get("description") or "") + f" (parameters: {param_values})"
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +679,99 @@ def delete_trusted_query(question: str):
         conn.execute("DELETE FROM semantic_trusted_queries WHERE question = ?", (question,))
 
 
+# ---------------------------------------------------------------------------
+# Instructions CRUD
+# ---------------------------------------------------------------------------
+
+def get_instructions(dataset_name: str | None = None,
+                     active_only: bool = True) -> list[dict]:
+    with get_db() as conn:
+        query = "SELECT * FROM semantic_instructions WHERE 1=1"
+        params: list = []
+        if active_only:
+            query += " AND is_active = 1"
+        if dataset_name:
+            query += " AND (scope = 'global' OR dataset_name = ?)"
+            params.append(dataset_name)
+        query += " ORDER BY priority DESC, id"
+        cursor = conn.execute(query, params)
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def upsert_instruction(instruction: str, scope: str = "global",
+                       dataset_name: str | None = None,
+                       priority: int = 0, is_active: int = 1) -> dict:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO semantic_instructions
+               (instruction, scope, dataset_name, priority, is_active)
+               VALUES (?, ?, ?, ?, ?)""",
+            (instruction, scope, dataset_name, priority, is_active),
+        )
+    return {"status": "ok"}
+
+
+def delete_instruction(instruction_id: int) -> dict:
+    with get_db() as conn:
+        conn.execute("DELETE FROM semantic_instructions WHERE id = ?", (instruction_id,))
+    return {"status": "ok"}
+
+
+def get_instructions_for_prompt(relevant_tables: list[str] | None = None) -> str:
+    """Build instructions text for injection into the LLM prompt."""
+    instructions = get_instructions()
+    if not instructions:
+        return ""
+
+    # Filter by scope
+    filtered = []
+    for inst in instructions:
+        if inst["scope"] == "global":
+            filtered.append(inst)
+        elif inst["scope"] == "dataset" and relevant_tables:
+            if inst.get("dataset_name") in relevant_tables:
+                filtered.append(inst)
+
+    if not filtered:
+        return ""
+
+    lines = ["## Instructions (follow these rules)"]
+    for inst in filtered:
+        scope_tag = f" [{inst['dataset_name']}]" if inst.get("dataset_name") else ""
+        lines.append(f"- {inst['instruction']}{scope_tag}")
+    return "\n".join(lines)
+
+
+def _seed_default_instructions():
+    with get_db() as conn:
+        cursor = conn.execute("SELECT COUNT(*) as cnt FROM semantic_instructions")
+        if cursor.fetchone()["cnt"] > 0:
+            return
+
+        default_instructions = [
+            ("When asked about revenue, always use the total_amount column, not unit_price * quantity.",
+             "dataset", "sales_orders", 10, 1),
+            ("For employee count questions, only count employees with employment_status = 'Active' unless the user explicitly asks about all employees.",
+             "dataset", "employees", 10, 1),
+            ("GDP values are stored in billions of USD. Always mention 'billion USD' in explanations.",
+             "dataset", "world_countries", 5, 1),
+            ("When comparing products, use unit_price (selling price) not cost_price unless the user asks about cost.",
+             "dataset", "product_inventory", 5, 1),
+            ("Always round monetary values to 2 decimal places and percentages to 1 decimal place.",
+             "global", None, 8, 1),
+            ("When the user asks about 'profit margin', calculate it as SUM(profit) * 100.0 / SUM(total_amount).",
+             "dataset", "sales_orders", 7, 1),
+            ("Dates in all tables are stored as TEXT in 'YYYY-MM-DD' format. Use substr() for date extraction.",
+             "global", None, 6, 1),
+            ("For 'low stock' queries, use the condition stock_quantity < reorder_level.",
+             "dataset", "product_inventory", 5, 1),
+        ]
+        conn.executemany(
+            "INSERT OR IGNORE INTO semantic_instructions (instruction, scope, dataset_name, priority, is_active) VALUES (?, ?, ?, ?, ?)",
+            default_instructions,
+        )
+
+
 def get_full_semantic_summary() -> dict:
     """Return a complete summary of the semantic layer for the API."""
     return {
@@ -598,4 +782,5 @@ def get_full_semantic_summary() -> dict:
         "filters": get_filters(),
         "joins": get_joins(),
         "trusted_queries": get_trusted_queries(),
+        "instructions": get_instructions(),
     }

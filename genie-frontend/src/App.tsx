@@ -29,6 +29,13 @@ import {
   Shield,
   HelpCircle,
   MessageCircle,
+  ThumbsUp,
+  ThumbsDown,
+  FlaskConical,
+  BookOpen,
+  Play,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { useApi } from "./hooks/useApi";
 import { ResultsTable } from "./components/ResultsTable";
@@ -38,7 +45,16 @@ import { DatasetExplorer } from "./components/DatasetExplorer";
 import { QueryHistory } from "./components/QueryHistory";
 import { SettingsModal } from "./components/SettingsModal";
 import { SemanticLayer } from "./components/SemanticLayer";
-import type { ConversationMessage, SuggestedQuestion, PipelineStageInfo } from "./types";
+import type {
+  ConversationMessage,
+  SuggestedQuestion,
+  PipelineStageInfo,
+  FeedbackStats,
+  SemanticInstruction,
+  BenchmarkCase,
+  BenchmarkRunResult,
+  BenchmarkRunSummary,
+} from "./types";
 
 const ICON_MAP: Record<string, React.ReactNode> = {
   globe: <Globe className="w-4 h-4" />,
@@ -51,7 +67,7 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   "pie-chart": <PieChart className="w-4 h-4" />,
 };
 
-type SidebarTab = "datasets" | "history" | "semantic";
+type SidebarTab = "datasets" | "history" | "semantic" | "quality";
 
 function SchemaRetrieverDetails({ output }: { output: Record<string, unknown> }) {
   const tableScores = output.table_scores as Record<string, number> | undefined;
@@ -150,6 +166,385 @@ function PipelineStages({ stages, totalMs }: { stages: PipelineStageInfo[]; tota
               )}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FeedbackButtons({
+  queryId,
+  question,
+  sqlQuery,
+  sessionId,
+}: {
+  queryId: string;
+  question: string;
+  sqlQuery: string;
+  sessionId?: string;
+}) {
+  const api = useApi();
+  const [voted, setVoted] = useState<"up" | "down" | null>(null);
+  const [showComment, setShowComment] = useState(false);
+  const [comment, setComment] = useState("");
+
+  const vote = async (v: "up" | "down") => {
+    if (voted) return;
+    setVoted(v);
+    try {
+      await api.submitFeedback({
+        query_id: queryId,
+        question,
+        vote: v,
+        sql_query: sqlQuery,
+        session_id: sessionId,
+        comment: comment || undefined,
+      });
+    } catch {
+      setVoted(null);
+    }
+    if (v === "down") setShowComment(true);
+  };
+
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <button
+        onClick={() => vote("up")}
+        disabled={voted !== null}
+        className={`p-1 rounded transition-colors ${
+          voted === "up"
+            ? "text-green-400 bg-green-900/30"
+            : voted
+            ? "text-gray-700 cursor-not-allowed"
+            : "text-gray-500 hover:text-green-400 hover:bg-green-900/20"
+        }`}
+        title="Good response"
+      >
+        <ThumbsUp className="w-3.5 h-3.5" />
+      </button>
+      <button
+        onClick={() => vote("down")}
+        disabled={voted !== null}
+        className={`p-1 rounded transition-colors ${
+          voted === "down"
+            ? "text-red-400 bg-red-900/30"
+            : voted
+            ? "text-gray-700 cursor-not-allowed"
+            : "text-gray-500 hover:text-red-400 hover:bg-red-900/20"
+        }`}
+        title="Bad response"
+      >
+        <ThumbsDown className="w-3.5 h-3.5" />
+      </button>
+      {voted && (
+        <span className="text-xs text-gray-600">
+          {voted === "up" ? "Thanks!" : "Thanks for the feedback"}
+        </span>
+      )}
+      {showComment && !comment && (
+        <input
+          type="text"
+          placeholder="What was wrong?"
+          className="text-xs bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 outline-none focus:border-indigo-500 w-48"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const val = (e.target as HTMLInputElement).value;
+              setComment(val);
+              setShowComment(false);
+              api.submitFeedback({
+                query_id: queryId,
+                question,
+                vote: "down",
+                sql_query: sqlQuery,
+                session_id: sessionId,
+                comment: val,
+              });
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function QualityPanel() {
+  const api = useApi();
+  const [tab, setTab] = useState<"feedback" | "benchmark" | "instructions">("feedback");
+  const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null);
+  const [instructions, setInstructions] = useState<SemanticInstruction[]>([]);
+  const [benchmarkCases, setBenchmarkCases] = useState<BenchmarkCase[]>([]);
+  const [benchmarkHistory, setBenchmarkHistory] = useState<BenchmarkRunSummary[]>([]);
+  const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkRunResult | null>(null);
+  const [runningBenchmark, setRunningBenchmark] = useState(false);
+  const [newInstruction, setNewInstruction] = useState("");
+  const [newInstructionScope, setNewInstructionScope] = useState("global");
+  const [newInstructionDataset, setNewInstructionDataset] = useState("");
+
+  useEffect(() => {
+    if (tab === "feedback") {
+      api.getFeedbackStats().then(setFeedbackStats).catch(() => {});
+    } else if (tab === "benchmark") {
+      api.getBenchmarkCases().then((r) => setBenchmarkCases(r.cases)).catch(() => {});
+      api.getBenchmarkHistory().then((r) => setBenchmarkHistory(r.history)).catch(() => {});
+    } else if (tab === "instructions") {
+      api.getInstructions().then((r) => setInstructions(r.instructions)).catch(() => {});
+    }
+  }, [tab]);
+
+  const runBenchmark = async () => {
+    setRunningBenchmark(true);
+    setBenchmarkResult(null);
+    try {
+      const result = await api.runBenchmark();
+      setBenchmarkResult(result);
+      api.getBenchmarkHistory().then((r) => setBenchmarkHistory(r.history)).catch(() => {});
+    } catch {
+      // ignore
+    } finally {
+      setRunningBenchmark(false);
+    }
+  };
+
+  const addInstruction = async () => {
+    if (!newInstruction.trim()) return;
+    await api.addInstruction({
+      instruction: newInstruction,
+      scope: newInstructionScope,
+      dataset_name: newInstructionScope === "dataset" ? newInstructionDataset : undefined,
+    });
+    setNewInstruction("");
+    const r = await api.getInstructions();
+    setInstructions(r.instructions);
+  };
+
+  const removeInstruction = async (id: number) => {
+    await api.deleteInstruction(id);
+    const r = await api.getInstructions();
+    setInstructions(r.instructions);
+  };
+
+  return (
+    <div className="p-3 space-y-3">
+      {/* Sub-tabs */}
+      <div className="flex gap-1 bg-gray-800 rounded-lg p-0.5">
+        {(["feedback", "benchmark", "instructions"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors capitalize ${
+              tab === t ? "bg-gray-700 text-white" : "text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {/* Feedback Tab */}
+      {tab === "feedback" && feedbackStats && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-gray-800 rounded-lg p-2.5 text-center">
+              <div className="text-lg font-bold text-white">{feedbackStats.accuracy_pct}%</div>
+              <div className="text-xs text-gray-500">Accuracy</div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-2.5 text-center">
+              <div className="text-lg font-bold text-green-400">{feedbackStats.upvotes}</div>
+              <div className="text-xs text-gray-500">Upvotes</div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-2.5 text-center">
+              <div className="text-lg font-bold text-red-400">{feedbackStats.downvotes}</div>
+              <div className="text-xs text-gray-500">Downvotes</div>
+            </div>
+          </div>
+          {feedbackStats.recent && feedbackStats.recent.length > 0 && (
+            <div className="space-y-1.5">
+              <h4 className="text-xs text-gray-500 font-medium">Recent Feedback</h4>
+              {feedbackStats.recent.slice(0, 10).map((f) => (
+                <div
+                  key={f.id}
+                  className="flex items-start gap-2 text-xs bg-gray-800/50 rounded p-2"
+                >
+                  {f.vote === "up" ? (
+                    <ThumbsUp className="w-3 h-3 text-green-400 mt-0.5 flex-shrink-0" />
+                  ) : (
+                    <ThumbsDown className="w-3 h-3 text-red-400 mt-0.5 flex-shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-gray-300 truncate">{f.question}</p>
+                    {f.comment && <p className="text-gray-500 mt-0.5">{f.comment}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Benchmark Tab */}
+      {tab === "benchmark" && (
+        <div className="space-y-3">
+          <button
+            onClick={runBenchmark}
+            disabled={runningBenchmark}
+            className="w-full flex items-center justify-center gap-2 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 text-white text-xs font-medium rounded-lg transition-colors"
+          >
+            {runningBenchmark ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Running {benchmarkCases.length} cases...
+              </>
+            ) : (
+              <>
+                <Play className="w-3.5 h-3.5" />
+                Run Benchmark ({benchmarkCases.length} cases)
+              </>
+            )}
+          </button>
+
+          {benchmarkResult && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-gray-800 rounded-lg p-2.5 text-center">
+                  <div className={`text-lg font-bold ${benchmarkResult.accuracy_pct >= 70 ? "text-green-400" : benchmarkResult.accuracy_pct >= 40 ? "text-amber-400" : "text-red-400"}`}>
+                    {benchmarkResult.accuracy_pct}%
+                  </div>
+                  <div className="text-xs text-gray-500">Accuracy</div>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-2.5 text-center">
+                  <div className="text-lg font-bold text-green-400">{benchmarkResult.passed}</div>
+                  <div className="text-xs text-gray-500">Passed</div>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-2.5 text-center">
+                  <div className="text-lg font-bold text-red-400">{benchmarkResult.failed}</div>
+                  <div className="text-xs text-gray-500">Failed</div>
+                </div>
+              </div>
+              <div className="space-y-1">
+                {benchmarkResult.details.map((d, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2 text-xs bg-gray-800/50 rounded p-2"
+                  >
+                    {d.passed ? (
+                      <CheckCircle2 className="w-3 h-3 text-green-400 mt-0.5 flex-shrink-0" />
+                    ) : (
+                      <XCircle className="w-3 h-3 text-red-400 mt-0.5 flex-shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-gray-300 truncate">{d.question}</p>
+                      <div className="flex gap-1.5 mt-0.5">
+                        {d.dataset && (
+                          <span className="text-gray-600">{d.dataset}</span>
+                        )}
+                        {d.difficulty && (
+                          <span className={`px-1 rounded ${
+                            d.difficulty === "easy" ? "text-green-500" :
+                            d.difficulty === "medium" ? "text-amber-500" : "text-red-500"
+                          }`}>
+                            {d.difficulty}
+                          </span>
+                        )}
+                        {d.is_trusted && (
+                          <span className="text-emerald-500">trusted</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {benchmarkHistory.length > 0 && !benchmarkResult && (
+            <div className="space-y-1.5">
+              <h4 className="text-xs text-gray-500 font-medium">Run History</h4>
+              {benchmarkHistory.map((h) => (
+                <div
+                  key={h.id}
+                  className="flex items-center justify-between text-xs bg-gray-800/50 rounded p-2"
+                >
+                  <span className="text-gray-400">
+                    {new Date(h.run_at).toLocaleString()}
+                  </span>
+                  <span className={`font-medium ${h.accuracy_pct >= 70 ? "text-green-400" : "text-amber-400"}`}>
+                    {h.accuracy_pct}% ({h.passed}/{h.total_cases})
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Instructions Tab */}
+      {tab === "instructions" && (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <textarea
+              value={newInstruction}
+              onChange={(e) => setNewInstruction(e.target.value)}
+              placeholder="Add an instruction, e.g., 'When asked about revenue, use total_amount not unit_price * quantity'"
+              className="w-full text-xs bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-300 outline-none focus:border-indigo-500 resize-none"
+              rows={2}
+            />
+            <div className="flex gap-2">
+              <select
+                value={newInstructionScope}
+                onChange={(e) => setNewInstructionScope(e.target.value)}
+                className="text-xs bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 outline-none"
+              >
+                <option value="global">Global</option>
+                <option value="dataset">Dataset</option>
+              </select>
+              {newInstructionScope === "dataset" && (
+                <select
+                  value={newInstructionDataset}
+                  onChange={(e) => setNewInstructionDataset(e.target.value)}
+                  className="text-xs bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 outline-none"
+                >
+                  <option value="">Select dataset</option>
+                  <option value="sales_orders">sales_orders</option>
+                  <option value="employees">employees</option>
+                  <option value="world_countries">world_countries</option>
+                  <option value="product_inventory">product_inventory</option>
+                </select>
+              )}
+              <button
+                onClick={addInstruction}
+                disabled={!newInstruction.trim()}
+                className="flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 text-white text-xs rounded transition-colors ml-auto"
+              >
+                <Plus className="w-3 h-3" />
+                Add
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            {instructions.map((inst) => (
+              <div
+                key={inst.id}
+                className="flex items-start gap-2 text-xs bg-gray-800/50 rounded p-2 group"
+              >
+                <BookOpen className="w-3 h-3 text-indigo-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-gray-300">{inst.instruction}</p>
+                  <div className="flex gap-1.5 mt-0.5 text-gray-600">
+                    <span>{inst.scope}</span>
+                    {inst.dataset_name && <span>/ {inst.dataset_name}</span>}
+                    <span>priority: {inst.priority}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => removeInstruction(inst.id)}
+                  className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -300,6 +695,17 @@ function App() {
             <Sparkles className="w-3.5 h-3.5" />
             Semantic
           </button>
+          <button
+            onClick={() => setSidebarTab("quality")}
+            className={`flex-1 py-2.5 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+              sidebarTab === "quality"
+                ? "text-indigo-400 border-b-2 border-indigo-400"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            Quality
+          </button>
         </div>
 
         {/* Sidebar Content */}
@@ -313,6 +719,8 @@ function App() {
             />
           ) : sidebarTab === "history" ? (
             <QueryHistory onSelectQuery={(q) => handleSubmit(q)} />
+          ) : sidebarTab === "quality" ? (
+            <QualityPanel />
           ) : (
             <SemanticLayer onAskQuestion={(q) => handleSubmit(q)} />
           )}
@@ -508,6 +916,16 @@ function App() {
                           <PipelineStages
                             stages={msg.response.pipeline_stages}
                             totalMs={msg.response.total_duration_ms}
+                          />
+                        )}
+
+                        {/* Feedback buttons */}
+                        {msg.response?.sql_query && msg.response?.query_id && (
+                          <FeedbackButtons
+                            queryId={msg.response.query_id}
+                            question={msg.response.question}
+                            sqlQuery={msg.response.sql_query}
+                            sessionId={sessionId || undefined}
                           />
                         )}
 

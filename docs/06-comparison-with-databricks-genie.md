@@ -209,22 +209,22 @@ Databricks Genie is part of the **AI/BI** product suite, built on a **compound A
 | **AI Engine** | Compound AI system (proprietary multi-model orchestration, retrievers, rankers) | Compound AI pipeline (8 stages: trusted query check, intent classifier, schema retriever, context assembler, SQL generator, SQL validator, result summarizer, follow-up suggester) | Both use multi-stage pipelines. Databricks uses proprietary fine-tuned models; Data Genie simulates the architecture using OpenAI GPT + heuristic stages |
 | **Pipeline Architecture** | Blackboard-style with proprietary orchestration | Blackboard-style with shared PipelineContext passed through independent stages | Similar pattern. Data Genie stages are modular and independently replaceable |
 | **Intent Classification** | Proprietary classifier embedded in compound AI system | LLM-based classification (7 intent types) with keyword fallback | Data Genie supports: aggregation, ranking, trend, comparison, lookup, filter, distribution |
-| **Schema Retrieval** | Intelligent schema matching using Unity Catalog metadata | Table/column scoring based on keyword matching + entity extraction from intent classifier | Databricks has richer metadata from Unity Catalog; Data Genie scores tables by keyword relevance |
+| **Schema Retrieval** | Intelligent schema matching using Unity Catalog metadata | 6-level hybrid retrieval: value dictionaries, column stats, TF-IDF embedding, LLM-assisted, usage patterns, weighted fusion | Databricks has richer metadata from Unity Catalog; Data Genie uses a 6-signal hybrid ranker |
 | **Context Assembly** | Per-space Knowledge Store (col descriptions, synonyms, joins, measures, filters, dimensions, value dicts) | Filtered semantic context (column descriptions, glossary, metrics, dimensions, filters, joins — scoped to relevant tables only) | Similar metadata categories. Databricks scopes per-space; Data Genie filters per-query based on schema retriever output |
 | **SQL Generation** | Proprietary fine-tuned NL-to-SQL model with org-specific training | OpenAI GPT with focused context from assembler + conversation history, pattern matcher fallback | Databricks model is specialized for SQL; Data Genie uses general-purpose LLM with rich prompt context |
 | **SQL Validation** | Built into execution layer with error correction | EXPLAIN-based validation with auto-fix loop (up to 2 retries) | Data Genie validates before execution and attempts LLM-based fixes for invalid SQL |
 | **Conversation** | Multi-turn with context retention + clarification questions | Multi-turn with session management, conversation history in DB, clarification questions for ambiguous queries | Both support multi-turn. Databricks has deeper context retention; Data Genie stores last 5 turns per session |
 | **Result Summarization** | Natural language summaries of query results | LLM-generated natural language summaries with key insights from result data | Both provide NL summaries. Data Genie includes row counts, key values, and contextual observations |
 | **Follow-up Suggestions** | Agentic follow-up questions based on conversation context | Intent-aware follow-up suggestions (heuristic + LLM-based) | Both suggest related questions. Data Genie generates follow-ups based on intent type and query results |
-| **Trusted Assets** | Parameterized SQL queries + UDFs with "Trusted" badge on responses | Trusted query fast path with fuzzy matching (60% threshold) and "Trusted" badge (green shield icon) | Databricks supports parameterized queries and locked-down UDFs; Data Genie does fuzzy keyword matching against static curated queries |
+| **Trusted Assets** | Parameterized SQL queries + UDFs with "Trusted" badge on responses | Trusted query fast path with fuzzy matching + parameterized queries with `{param}` template syntax and auto-extraction | Both support parameterized queries. Databricks adds UDFs; Data Genie uses regex-based parameter extraction from natural language |
 | **Semantic Layer** | Knowledge Store (per-space: col descriptions, synonyms, joins with cardinality, measures, filters, dimensions, value dicts, prompt matching) | SQLite tables (column_descs, glossary, metrics, dimensions, filters, joins, trusted_queries) with CRUD API (11 endpoints) | Similar metadata categories. Databricks scopes per-space with value dictionaries; Data Genie has one global semantic layer |
-| **Instructions** | Per-space text instructions + usage guidance on queries | Not implemented (semantic context in LLM prompt serves a similar role) | Databricks supports explicit natural language rules per space; Data Genie embeds all context in the system prompt |
+| **Instructions** | Per-space text instructions + usage guidance on queries | Per-space instructions (global or dataset-scoped) injected into SQL generator prompt | Both support explicit text rules. Databricks scopes per-space; Data Genie scopes global or per-dataset with priority ordering |
 | **Governance** | Unity Catalog (RBAC, lineage, tags, audit logs, metric views) | None | Major gap — no access control, lineage, or audit trail |
 | **Query Execution** | SQL Warehouses + Photon engine (auto-scaling, serverless) | SQLite (embedded, single-writer) | Databricks scales to petabytes with distributed compute; Data Genie is limited to single-digit GB datasets |
 | **Data Storage** | Delta Lake (ACID, time travel, petabyte-scale, open format) | SQLite file (single file, MB-scale) | Completely different scale and capability |
 | **Metrics** | Metric Views in Unity Catalog (centralized, auto-materialized, shared across tools) | semantic_metrics table (SQL expressions, per-table) | Databricks metrics are governed platform objects; Data Genie metrics are simple expressions stored in SQLite |
-| **Quality** | Benchmarking tool (define expected answers, track accuracy over time, detect regressions) | Not implemented | No systematic quality measurement in Data Genie |
-| **Feedback** | Confidence voting (thumbs up/down per response), used to improve Genie | Not implemented | No feedback loop in Data Genie |
+| **Quality** | Benchmarking tool (define expected answers, track accuracy over time, detect regressions) | Benchmark runner with 20 seeded test cases, automated accuracy tests, run history tracking | Both define expected Q&A pairs and track accuracy. Databricks integrates with Genie Spaces; Data Genie runs through the full compound AI pipeline |
+| **Feedback** | Confidence voting (thumbs up/down per response), used to improve Genie | Thumbs up/down voting per response with optional comments, accuracy tracking dashboard | Both collect user feedback. Databricks uses feedback for model improvement; Data Genie tracks accuracy % and displays stats in Quality panel |
 | **Deployment** | Managed SaaS (Databricks workspace) | Self-hosted (Fly.io / local) | Databricks is fully managed; Data Genie requires manual deployment |
 | **Cost** | Pay-per-DBU ($0.22+/DBU for SQL Serverless) + seat licensing | Free (open-source) + OpenAI API costs (~$0.001-0.01 per question) | Data Genie is dramatically cheaper for small-scale use |
 
@@ -265,13 +265,13 @@ Databricks Genie is part of the **AI/BI** product suite, built on a **compound A
 | ~~SQL validation~~ | **DONE** | ~~Medium~~ | EXPLAIN-based validation with auto-fix loop (up to 2 retries) |
 | ~~Column descriptions / metadata~~ | **DONE** | ~~Low~~ | Semantic layer with 7 tables now included in LLM prompts |
 | Authentication & RBAC | Not started | High | Integrate OAuth 2.0; per-user permissions on datasets |
-| Parameterized trusted queries | Not started | Medium | Template syntax in trusted queries; extract parameters from user questions |
-| Benchmarking / quality monitoring | Not started | Medium | Define expected Q&A pairs; run automated accuracy tests |
-| Feedback loop | Not started | Low | Thumbs up/down per response; store votes; use for tuning |
+| ~~Parameterized trusted queries~~ | **DONE** | ~~Medium~~ | Template syntax `{param}` with regex-based parameter extraction from natural language |
+| ~~Benchmarking / quality monitoring~~ | **DONE** | ~~Medium~~ | 20 seeded test cases, automated benchmark runner, accuracy tracking, run history |
+| ~~Feedback loop~~ | **DONE** | ~~Low~~ | Thumbs up/down per response with comments, accuracy dashboard in Quality panel |
 | Query caching | Not started | Low | Cache LLM responses keyed by (question, schema_hash) |
 | Streaming responses | Not started | Medium | Use OpenAI streaming API + SSE to show SQL as it's generated |
 | Data connectors | Not started | High | Add connectors for PostgreSQL, MySQL, Snowflake, BigQuery |
-| Value dictionaries / entity matching | Not started | Medium | Store example column values to improve LLM matching for categorical data |
+| ~~Value dictionaries / entity matching~~ | **DONE** | ~~Medium~~ | Auto-scanned categorical column values for Level 1 retrieval matching |
 
 ### Nice-to-have features
 
@@ -286,7 +286,7 @@ Databricks Genie is part of the **AI/BI** product suite, built on a **compound A
 | Admin panel for semantic layer | Medium | CRUD UI for semantic metadata (API exists; needs dedicated admin UI) |
 | Fine-tuned SQL model | High | Train a domain-specific NL-to-SQL model on organization query patterns |
 | Confidence scoring | Medium | Score each response for accuracy/confidence, display to users |
-| Per-space instructions | Low | Add text instruction support per dataset/space for domain-specific rules |
+| ~~Per-space instructions~~ | ~~Low~~ | **DONE** — global and dataset-scoped instructions injected into SQL generator prompt, CRUD API + admin UI |
 
 ---
 
