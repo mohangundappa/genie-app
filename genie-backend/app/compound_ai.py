@@ -75,6 +75,7 @@ class PipelineContext:
     needs_clarification: bool = False
 
     # Pipeline metadata
+    query_id: str = ""
     stages: list[PipelineStage] = field(default_factory=list)
     total_duration_ms: float = 0.0
     error: str | None = None
@@ -817,8 +818,7 @@ def run_compound_pipeline(question: str, session_id: str | None = None) -> dict:
     client = _get_client()
 
     # Initialize context
-    query_id = str(uuid.uuid4())[:8]
-    ctx = PipelineContext(question=question, session_id=session_id)
+    ctx = PipelineContext(question=question, session_id=session_id, query_id=str(uuid.uuid4())[:8])
 
     # Load conversation history if session exists
     if session_id:
@@ -955,7 +955,7 @@ def _build_response(ctx: PipelineContext, query_result: dict | None) -> dict:
 
     return {
         # Backward-compatible fields
-        "query_id": query_id,
+        "query_id": ctx.query_id,
         "question": ctx.question,
         "sql_query": ctx.sql,
         "columns": query_result["columns"] if query_result else [],
@@ -988,7 +988,7 @@ def _build_clarification_response(ctx: PipelineContext) -> dict:
         })
 
     return {
-        "query_id": query_id,
+        "query_id": ctx.query_id,
         "question": ctx.question,
         "sql_query": "",
         "columns": [],
