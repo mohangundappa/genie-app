@@ -191,6 +191,10 @@ function FeedbackButtons({
   const vote = async (v: "up" | "down") => {
     if (voted) return;
     setVoted(v);
+    if (v === "down") {
+      setShowComment(true);
+      return;
+    }
     try {
       await api.submitFeedback({
         query_id: queryId,
@@ -198,12 +202,10 @@ function FeedbackButtons({
         vote: v,
         sql_query: sqlQuery,
         session_id: sessionId,
-        comment: comment || undefined,
       });
     } catch {
       setVoted(null);
     }
-    if (v === "down") setShowComment(true);
   };
 
   return (
@@ -244,12 +246,13 @@ function FeedbackButtons({
       {showComment && !comment && (
         <input
           type="text"
-          placeholder="What was wrong?"
+          placeholder="What was wrong? (Enter to submit)"
           className="text-xs bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 outline-none focus:border-indigo-500 w-48"
+          autoFocus
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               const val = (e.target as HTMLInputElement).value;
-              setComment(val);
+              setComment(val || "(no comment)");
               setShowComment(false);
               api.submitFeedback({
                 query_id: queryId,
@@ -257,9 +260,22 @@ function FeedbackButtons({
                 vote: "down",
                 sql_query: sqlQuery,
                 session_id: sessionId,
-                comment: val,
+                comment: val || undefined,
               });
             }
+          }}
+          onBlur={(e) => {
+            const val = e.target.value;
+            setComment(val || "(no comment)");
+            setShowComment(false);
+            api.submitFeedback({
+              query_id: queryId,
+              question,
+              vote: "down",
+              sql_query: sqlQuery,
+              session_id: sessionId,
+              comment: val || undefined,
+            });
           }}
         />
       )}

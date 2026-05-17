@@ -604,11 +604,11 @@ def _match_parameterized_query(row: dict, q_lower: str) -> dict | None:
     for i, param in enumerate(param_names):
         param_values[param] = match.group(i + 1).strip()
 
-    # Substitute into SQL template
+    # Substitute into SQL template (sanitize to prevent SQL injection)
     resolved_sql = sql_template
     for param, value in param_values.items():
-        # Use title case for SQL values (e.g., 'east' -> 'East')
-        resolved_sql = resolved_sql.replace("{" + param + "}", value.title())
+        sanitized = value.title().replace("'", "''")
+        resolved_sql = resolved_sql.replace("{" + param + "}", sanitized)
 
     result = dict(row)
     result["sql_query"] = resolved_sql
