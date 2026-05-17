@@ -171,12 +171,35 @@ The OpenAI API key is stored in plaintext in the SQLite `settings` table. This i
 
 ---
 
+## 6-Level Hybrid Schema Retrieval
+
+The compound AI pipeline now includes a **6-level hybrid schema retriever** (`schema_retriever.py`) that replaces the old hard-coded keyword matching. Instead of dumping the entire schema to the LLM, it intelligently selects relevant tables using multiple signals:
+
+| Level | Signal | Method | Weight |
+|-------|--------|--------|--------|
+| 1 | **Value Dictionaries** | Matches actual column values in the question (e.g., "Electronics" → `product_category`) | 0.25 |
+| 2 | **Column Statistics** | Auto-profiles distinct counts, min/max, null rates, cardinality | (context enrichment) |
+| 3 | **Embedding Search** | TF-IDF word vectors for semantic similarity (no external model deps) | 0.20 |
+| 4 | **LLM-Assisted Selection** | Cheap gpt-4o-mini call for ambiguous schema resolution | 0.15 |
+| 5 | **Usage Patterns** | Learns co-occurring table/column pairs from past queries | 0.05 |
+| 6 | **Hybrid Ranker** | Weighted fusion of all signals with configurable weights | — |
+
+**How it works:**
+1. Each signal independently scores tables/columns
+2. Scores are normalized and combined using weighted fusion
+3. Tables scoring ≥20% of the top score are included
+4. Selected tables + value matches + filter hints are passed to the Context Assembler
+
+**Trade-off**: The TF-IDF embedding approach is dependency-free and fast (~10ms) but less powerful than transformer-based embeddings (e.g., `all-MiniLM-L6-v2`). For 4 tables this is more than sufficient; a production system with 100+ tables would benefit from a proper embedding model. The embedding index is cached in memory after first build.
+
+---
+
 ## Future Improvements
 
-1. **Schema-aware RAG**: For large schemas, embed column descriptions and retrieve relevant tables based on the question, rather than sending the entire schema.
+1. **Transformer embeddings**: Replace TF-IDF with `all-MiniLM-L6-v2` or similar for better semantic matching at scale.
 2. **Query validation**: Before executing, parse the generated SQL AST to verify it only accesses expected tables and columns.
 3. **Query caching**: Cache LLM responses for identical questions to reduce cost and latency.
-4. **Multi-turn context**: Pass previous Q&A pairs to the LLM so users can ask follow-up questions ("now filter that by Asia").
-5. **Confidence scoring**: Have the LLM rate its confidence in the generated SQL, and show a warning for low-confidence queries.
-6. **Semantic embedding for trusted queries**: Replace keyword-based fuzzy matching with vector similarity for more accurate trusted query matching.
-7. **Auto-generated semantic metadata**: Use LLM to automatically generate column descriptions and glossary entries from data samples, reducing manual curation effort.
+4. **Confidence scoring**: Have the LLM rate its confidence in the generated SQL, and show a warning for low-confidence queries.
+5. **Auto-generated semantic metadata**: Use LLM to automatically generate column descriptions and glossary entries from data samples, reducing manual curation effort.
+6. **Adaptive signal weights**: Learn optimal signal weights from user feedback (correct/incorrect query results) rather than using fixed weights.
+7. **Cross-table usage patterns**: Track which tables are frequently queried together to improve JOIN suggestions.

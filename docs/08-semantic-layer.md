@@ -198,7 +198,8 @@ The `semantic_` prefix serves as a namespace to clearly separate metadata tables
 | Access controls | Fine-grained RBAC | Not implemented |
 | Trusted assets | Admin-curated queries + instructions | `semantic_trusted_queries` with fuzzy matching |
 | Discovery | Search across all catalog objects | Search bar in Semantic sidebar tab |
-| Auto-profiling | Statistical profiling of columns | Not implemented |
+| Auto-profiling | Statistical profiling of columns | `semantic_column_stats` table with auto-profiled distinct counts, min/max, null rates, cardinality |
+| Value dictionaries | Categorical value lookup for filter matching | `semantic_value_dictionary` table with auto-scanned column values and frequency counts |
 
 ---
 
@@ -213,6 +214,60 @@ The `semantic_` prefix serves as a namespace to clearly separate metadata tables
 | Filters | 17 | "Active Employees" = `employment_status = 'Active'` |
 | Joins | 1 | `sales_orders.product_name = product_inventory.product_name` (LEFT JOIN) |
 | Trusted queries | 12 | "What are the top 10 countries by GDP?" → `SELECT country, gdp_usd_billion FROM world_countries ORDER BY gdp_usd_billion DESC LIMIT 10` |
+| Value dictionary | ~1062 | "Electronics" in `product_inventory.category` (frequency: 14) — auto-scanned on startup |
+| Column stats | ~52 | `employees.salary`: distinct=147, min=30256.59, max=197641.0, null=0, categorical=false — auto-profiled on startup |
+| Usage patterns | 0 (grows) | Tracks which tables/columns are queried together — builds up over time |
+
+---
+
+## Schema Retrieval Tables (3 additional tables)
+
+Beyond the 7 core semantic tables, the schema retrieval engine adds 3 auto-populated tables:
+
+### `semantic_value_dictionary` (~1062 rows, auto-populated)
+
+Stores actual column values from categorical columns (distinct count < 100) for Level 1 value matching.
+
+| Column | Type | Purpose |
+|--------|------|--------|
+| `table_name` | TEXT | Source table |
+| `column_name` | TEXT | Source column |
+| `sample_value` | TEXT | Original value (e.g., "Electronics") |
+| `normalized_value` | TEXT | Lowercased for matching |
+| `frequency` | INTEGER | How often this value appears |
+
+**Trade-off**: Only categorical columns (distinct < 100) are indexed to avoid memory bloat. This means numeric columns and high-cardinality text columns (emails, IDs) are excluded.
+
+### `semantic_column_stats` (~52 rows, auto-populated)
+
+Stores auto-profiled statistics for every column across all datasets.
+
+| Column | Type | Purpose |
+|--------|------|--------|
+| `table_name` | TEXT | Source table |
+| `column_name` | TEXT | Source column |
+| `data_type` | TEXT | Detected type (TEXT, INTEGER, REAL) |
+| `distinct_count` | INTEGER | Number of unique values |
+| `null_count` | INTEGER | Number of NULL values |
+| `total_count` | INTEGER | Total rows |
+| `min_value` | TEXT | Minimum value |
+| `max_value` | TEXT | Maximum value |
+| `avg_value` | REAL | Average (numeric columns only) |
+| `is_categorical` | INTEGER | 1 if distinct < 100 |
+| `sample_values` | TEXT | JSON array of example values |
+
+### `schema_usage_patterns` (grows over time)
+
+Records which tables and columns are used together in executed queries. Used for Level 5 usage-based boosting.
+
+| Column | Type | Purpose |
+|--------|------|--------|
+| `table_name` | TEXT | Table used |
+| `column_name` | TEXT | Column used (nullable) |
+| `co_table` | TEXT | Co-occurring table |
+| `co_column` | TEXT | Co-occurring column |
+| `frequency` | INTEGER | How many times seen together |
+| `last_used` | TIMESTAMP | Last query time |
 
 ---
 
@@ -220,8 +275,9 @@ The `semantic_` prefix serves as a namespace to clearly separate metadata tables
 
 1. **Admin UI**: Build a dedicated admin panel for managing semantic metadata (currently API-only for writes, sidebar for reads).
 2. **Auto-discovery**: Use LLM to automatically generate column descriptions and glossary entries from data samples.
-3. **Semantic search for trusted queries**: Replace keyword matching with vector embeddings for more accurate matching.
+3. **Transformer embeddings**: Replace TF-IDF with `all-MiniLM-L6-v2` or similar for better semantic matching at scale.
 4. **Parameterized trusted queries**: Support templates like `SELECT ... WHERE region = '{region}'` with parameter extraction from user questions.
 5. **Metric composition**: Allow metrics to reference other metrics (e.g., "Profit Margin" = "Total Profit" / "Total Revenue").
 6. **Version history**: Track changes to semantic metadata over time for audit and rollback.
 7. **Import/export**: Support YAML/JSON import/export of semantic layer definitions for version control and migration.
+8. **Adaptive signal weights**: Learn optimal retrieval signal weights from user feedback rather than using fixed weights.

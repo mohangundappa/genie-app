@@ -61,8 +61,10 @@ We chose the chat-based approach because it aligns with the Databricks Genie men
 ### Component breakdown
 
 #### `App.tsx` — Application Shell
-- **Responsibility**: Layout (sidebar + main content), routing state, message management.
+- **Responsibility**: Layout (sidebar + main content), routing state, message management, pipeline stage viewer.
 - **Trade-off**: All state lives here (messages, input, loading, sidebar, settings). This is fine for the current scale but would need extraction to a context/store if we added features like multi-conversation, collaborative editing, or persistent sessions.
+- **Pipeline Viewer**: Expandable panel showing all 8 compound AI stages with timing. Clicking the `schema_retriever` stage reveals hybrid retrieval details: table scores with confidence values, signal badges (keyword, entity, value_dictionary, embedding_search), value match counts, and filter hints.
+- **SchemaRetrieverDetails component**: Renders the retrieval method summary, per-table scores, signal type badges, and amber-highlighted value match indicators. This provides full transparency into which retrieval signals influenced table selection.
 
 #### `ChartView.tsx` — Visualization Engine
 - **Responsibility**: Renders bar, line, pie, area, and scatter charts from data + config.

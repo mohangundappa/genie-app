@@ -25,6 +25,13 @@ from app.compound_ai import (
     get_all_sessions,
     get_conversation_history,
 )
+from app.schema_retriever import (
+    init_value_dictionary,
+    init_column_stats,
+    init_usage_patterns,
+    get_value_dictionary,
+    get_column_stats,
+)
 from app.semantic_layer import (
     init_semantic_layer,
     get_full_semantic_summary,
@@ -51,6 +58,9 @@ async def lifespan(app: FastAPI):
     init_db()
     init_semantic_layer()
     init_conversation_tables()
+    init_value_dictionary()
+    init_column_stats()
+    init_usage_patterns()
     yield
 
 
@@ -283,6 +293,16 @@ async def get_semantic_filters(table_name: str | None = None):
 @app.get("/api/semantic/joins")
 async def get_semantic_joins():
     return {"joins": get_joins()}
+
+
+@app.get("/api/semantic/value-dictionary")
+async def get_semantic_value_dictionary(table_name: str | None = None):
+    return {"value_dictionary": get_value_dictionary(table_name)}
+
+
+@app.get("/api/semantic/column-stats")
+async def get_semantic_column_stats(table_name: str | None = None):
+    return {"column_stats": get_column_stats(table_name)}
 
 
 @app.get("/api/semantic/trusted-queries")

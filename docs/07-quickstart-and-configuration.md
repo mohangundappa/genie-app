@@ -22,6 +22,9 @@ The backend will:
 - Create a `genie.db` SQLite database file
 - Load all 4 sample datasets (world_countries, sales_orders, employees, product_inventory)
 - Initialize the semantic layer with metadata for all datasets (column descriptions, glossary, metrics, dimensions, filters, joins, trusted queries)
+- Auto-scan categorical columns and build the **value dictionary** (~1000 entries)
+- Auto-profile all columns and build **column statistics** (~52 profiles)
+- Initialize the **usage patterns** table for query history learning
 - Start the API server at `http://localhost:8000`
 - Serve interactive API docs at `http://localhost:8000/docs`
 
@@ -123,6 +126,8 @@ The app works without an API key using a rule-based pattern matcher. You'll see 
 | `GET /api/semantic/trusted-queries?table_name=X` | — | Trusted SQL queries |
 | `POST /api/semantic/trusted-queries` | `{"question": "...", "sql_query": "...", ...}` | Add/update trusted query |
 | `DELETE /api/semantic/trusted-queries?question=X` | — | Remove trusted query |
+| `GET /api/semantic/value-dictionary?table_name=X` | — | Auto-scanned column values with frequency (optional table filter) |
+| `GET /api/semantic/column-stats?table_name=X` | — | Auto-profiled column statistics (optional table filter) |
 
 ---
 
@@ -132,8 +137,8 @@ To add your own dataset:
 
 1. Open `genie-backend/app/database.py`
 2. Add a new `CREATE TABLE` statement and data insertion in the `load_sample_datasets()` function.
-3. Update the keyword mappings in `genie-backend/app/nl_to_sql.py` (in the `handle_without_llm()` function) to support the new table in fallback mode.
-4. Restart the backend — the new dataset will appear automatically in the sidebar.
+3. Update the keyword mappings in `genie-backend/app/schema_retriever.py` (in `TABLE_KEYWORDS`) to support the new table in fallback keyword matching.
+4. Restart the backend — the new dataset will appear automatically in the sidebar, and the schema retriever will auto-scan the new table's values and column statistics.
 
 If using the LLM mode (with OpenAI API key), no changes to `nl_to_sql.py` are needed — the LLM reads the schema dynamically.
 
