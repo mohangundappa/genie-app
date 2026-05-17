@@ -53,8 +53,62 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 
 type SidebarTab = "datasets" | "history" | "semantic";
 
+function SchemaRetrieverDetails({ output }: { output: Record<string, unknown> }) {
+  const tableScores = output.table_scores as Record<string, number> | undefined;
+  const signalsUsed = output.signals_used as Record<string, number> | undefined;
+  const method = output.method as string | undefined;
+  const valueMatches = output.value_matches as number | undefined;
+  const filterHints = output.filter_hints as string[] | undefined;
+
+  return (
+    <div className="mt-1.5 ml-5 space-y-1.5 text-xs">
+      {method && (
+        <div className="text-indigo-400 italic">{method}</div>
+      )}
+      {tableScores && Object.keys(tableScores).length > 0 && (
+        <div>
+          <span className="text-gray-500">Tables: </span>
+          {Object.entries(tableScores).map(([table, score], i) => (
+            <span key={table}>
+              {i > 0 && <span className="text-gray-600">, </span>}
+              <span className="text-cyan-400">{table}</span>
+              <span className="text-gray-600"> ({(score as number).toFixed(3)})</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {signalsUsed && Object.keys(signalsUsed).length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(signalsUsed).map(([signal, count]) => (
+            <span
+              key={signal}
+              className="px-1.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-gray-300"
+            >
+              {signal}: {count as number}
+            </span>
+          ))}
+        </div>
+      )}
+      {(valueMatches !== undefined && valueMatches > 0) && (
+        <div className="text-amber-400">
+          {valueMatches} value match{valueMatches !== 1 ? "es" : ""} found in data
+        </div>
+      )}
+      {filterHints && filterHints.length > 0 && (
+        <div>
+          <span className="text-gray-500">Filter hints: </span>
+          {filterHints.map((h, i) => (
+            <span key={i} className="text-green-400">{i > 0 ? ", " : ""}{h}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PipelineStages({ stages, totalMs }: { stages: PipelineStageInfo[]; totalMs: number }) {
   const [expanded, setExpanded] = useState(false);
+  const [expandedStage, setExpandedStage] = useState<number | null>(null);
   if (!stages.length) return null;
 
   return (
@@ -71,16 +125,29 @@ function PipelineStages({ stages, totalMs }: { stages: PipelineStageInfo[]; tota
       {expanded && (
         <div className="mt-2 space-y-1 pl-1 border-l-2 border-gray-800">
           {stages.map((s, i) => (
-            <div key={i} className="flex items-center gap-2 pl-3 py-0.5 text-xs">
-              {s.status === "completed" ? (
-                <CheckCircle2 className="w-3 h-3 text-green-500 flex-shrink-0" />
-              ) : s.status === "error" ? (
-                <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
-              ) : (
-                <Clock className="w-3 h-3 text-gray-500 flex-shrink-0" />
+            <div key={i}>
+              <button
+                onClick={() => setExpandedStage(expandedStage === i ? null : i)}
+                className="flex items-center gap-2 pl-3 py-0.5 text-xs w-full text-left hover:bg-gray-800/50 rounded transition-colors"
+              >
+                {s.status === "completed" ? (
+                  <CheckCircle2 className="w-3 h-3 text-green-500 flex-shrink-0" />
+                ) : s.status === "error" ? (
+                  <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />
+                ) : (
+                  <Clock className="w-3 h-3 text-gray-500 flex-shrink-0" />
+                )}
+                <span className="text-gray-400 font-mono">{s.name}</span>
+                <span className="text-gray-600">{s.duration_ms.toFixed(1)}ms</span>
+                {s.name === "schema_retriever" && s.output && (
+                  <span className="text-indigo-400 ml-1">
+                    {expandedStage === i ? <ChevronUp className="w-3 h-3 inline" /> : <ChevronDown className="w-3 h-3 inline" />}
+                  </span>
+                )}
+              </button>
+              {expandedStage === i && s.name === "schema_retriever" && s.output && (
+                <SchemaRetrieverDetails output={s.output} />
               )}
-              <span className="text-gray-400 font-mono">{s.name}</span>
-              <span className="text-gray-600">{s.duration_ms.toFixed(1)}ms</span>
             </div>
           ))}
         </div>

@@ -31,6 +31,11 @@ from app.semantic_layer import (
     get_filters,
     get_joins,
 )
+from app.schema_retriever import (
+    hybrid_retrieve_schema,
+    record_usage,
+    RetrievalResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +60,7 @@ class PipelineContext:
     intent: dict = field(default_factory=dict)
     relevant_tables: list[str] = field(default_factory=list)
     relevant_columns: list[dict] = field(default_factory=list)
+    retrieval_result: RetrievalResult | None = None
     semantic_context: str = ""
     sql: str = ""
     explanation: str = ""
@@ -177,64 +183,43 @@ def _keyword_classify(q_lower: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: Schema Retriever
+# Stage 2: Schema Retriever (Hybrid — 6-level retrieval)
 # ---------------------------------------------------------------------------
 
-TABLE_KEYWORDS = {
-    "world_countries": ["country", "countries", "population", "gdp", "continent",
-                        "capital", "currency", "area", "life expectancy", "literacy",
-                        "nation", "global", "world"],
-    "sales_orders": ["sales", "order", "orders", "revenue", "profit", "customer",
-                     "discount", "shipping", "product_category", "segment", "region",
-                     "city", "total_amount", "quantity", "price"],
-    "employees": ["employee", "employees", "salary", "department", "hire", "job",
-                  "performance", "rating", "bonus", "office", "staff", "headcount",
-                  "workforce", "compensation", "HR"],
-    "product_inventory": ["product", "inventory", "stock", "sku", "warehouse",
-                          "brand", "supplier", "reorder", "rating", "review",
-                          "cost_price", "unit_price", "category"],
-}
-
-
-def retrieve_schema(ctx: PipelineContext) -> None:
+def retrieve_schema(ctx: PipelineContext, client: OpenAI | None = None) -> None:
     stage = PipelineStage(name="schema_retriever")
     stage.status = "running"
     start = time.time()
 
-    q_lower = ctx.question.lower()
+    # Use hybrid retrieval with all 6 levels
+    retrieval = hybrid_retrieve_schema(
+        question=ctx.question,
+        intent=ctx.intent,
+        client=client,
+        use_llm=client is not None,
+    )
 
-    # Score each table by keyword matches
-    table_scores: dict[str, float] = {}
-    for table, keywords in TABLE_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in q_lower)
-        if score > 0:
-            table_scores[table] = score
+    ctx.relevant_tables = retrieval.tables
+    ctx.relevant_columns = retrieval.relevant_columns
+    ctx.retrieval_result = retrieval
 
-    # Also check entities from intent classifier
-    for entity in ctx.intent.get("entities", []):
-        if entity in TABLE_KEYWORDS:
-            table_scores[entity] = table_scores.get(entity, 0) + 3
-
-    # If no tables matched, include all (broad query)
-    if not table_scores:
-        ctx.relevant_tables = list(TABLE_KEYWORDS.keys())
-    else:
-        # Sort by score, take top matches
-        sorted_tables = sorted(table_scores.items(), key=lambda x: x[1], reverse=True)
-        ctx.relevant_tables = [t[0] for t in sorted_tables]
-
-    # Get relevant column descriptions
-    all_columns = get_column_descriptions()
-    ctx.relevant_columns = [
-        col for col in all_columns
-        if col["table_name"] in ctx.relevant_tables
-    ]
+    # Build signal summary for stage output
+    signal_counts = {
+        name: len(scores)
+        for name, scores in retrieval.retrieval_signals.items()
+        if scores
+    }
 
     stage.duration_ms = (time.time() - start) * 1000
     stage.status = "completed"
     stage.output = {
-        "tables": ctx.relevant_tables,
-        "column_count": len(ctx.relevant_columns),
+        "tables": retrieval.tables,
+        "table_scores": retrieval.table_scores,
+        "column_count": len(retrieval.relevant_columns),
+        "value_matches": len(retrieval.value_matches),
+        "filter_hints": retrieval.filter_hints,
+        "signals_used": signal_counts,
+        "method": retrieval.method_summary,
     }
     ctx.stages.append(stage)
 
@@ -262,6 +247,37 @@ def assemble_context(ctx: PipelineContext) -> None:
             biz = f' (business name: "{col["business_name"]}")' if col.get("business_name") else ""
             fmt = f" [format: {col['data_format']}]" if col.get("data_format") else ""
             parts.append(f"- {col['column_name']}: {col['description']}{biz}{fmt}")
+
+    # Value matches from hybrid retriever (Level 1)
+    if ctx.retrieval_result and ctx.retrieval_result.value_matches:
+        parts.append("\n## Value Matches (exact data values found in question)")
+        for vm in ctx.retrieval_result.value_matches:
+            parts.append(f"- {vm['detail']}")
+
+    # Filter hints from LLM schema selection (Level 4)
+    if ctx.retrieval_result and ctx.retrieval_result.filter_hints:
+        parts.append("\n## Filter Hints (suggested WHERE clauses)")
+        for fh in ctx.retrieval_result.filter_hints:
+            parts.append(f"- {fh}")
+
+    # Column statistics for relevant tables (Level 2)
+    if ctx.retrieval_result and ctx.retrieval_result.column_stats:
+        parts.append("\n## Column Statistics (data profiling)")
+        for cs in ctx.retrieval_result.column_stats:
+            stat_parts = [f"{cs['table_name']}.{cs['column_name']}"]
+            if cs.get('distinct_count') is not None:
+                stat_parts.append(f"distinct={cs['distinct_count']}")
+            if cs.get('min_value') is not None and cs.get('max_value') is not None:
+                stat_parts.append(f"range=[{cs['min_value']}..{cs['max_value']}]")
+            if cs.get('is_categorical'):
+                stat_parts.append("categorical")
+                if cs.get('sample_values'):
+                    try:
+                        samples = json.loads(cs['sample_values'])
+                        stat_parts.append(f"values={samples[:5]}")
+                    except Exception:
+                        pass
+            parts.append(f"- {' | '.join(stat_parts)}")
 
     # Glossary (filtered by relevance)
     glossary = get_glossary()
@@ -867,8 +883,8 @@ def run_compound_pipeline(question: str, session_id: str | None = None) -> dict:
             )
         return _build_clarification_response(ctx)
 
-    # --- Stage 2: Schema Retrieval ---
-    retrieve_schema(ctx)
+    # --- Stage 2: Schema Retrieval (Hybrid 6-level) ---
+    retrieve_schema(ctx, client)
 
     # --- Stage 3: Context Assembly ---
     assemble_context(ctx)
@@ -907,6 +923,12 @@ def run_compound_pipeline(question: str, session_id: str | None = None) -> dict:
             session_id, "assistant", ctx.explanation,
             sql_query=ctx.sql, result_summary=ctx.result_summary,
         )
+
+    # --- Record usage patterns for future retrieval (Level 5) ---
+    try:
+        record_usage(ctx.sql, ctx.relevant_tables)
+    except Exception:
+        pass  # Non-critical, don't fail pipeline
 
     ctx.total_duration_ms = (time.time() - pipeline_start) * 1000
     return _build_response(ctx, query_result)

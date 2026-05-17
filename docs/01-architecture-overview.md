@@ -57,7 +57,7 @@ Unlike a single LLM call, Data Genie uses a multi-stage compound AI pipeline ins
 |-------|------|---------|
 | 0 | **Trusted Query Check** | Pre-LLM: matches known questions to curated SQL (instant, no LLM cost) |
 | 1 | **Intent Classifier** | Categorizes question type (aggregation, ranking, trend, comparison, lookup, filter, distribution) |
-| 2 | **Schema Retriever** | Semantically matches relevant tables/columns instead of dumping entire schema |
+| 2 | **Schema Retriever** | 6-level hybrid retrieval: value dictionaries, column stats, embedding search, LLM selection, usage patterns, weighted fusion |
 | 3 | **Context Assembler** | Pulls matching glossary terms, metrics, dimensions, and filters from semantic layer |
 | 4 | **SQL Generator** | Generates SQL with focused, filtered context (LLM or pattern matcher) |
 | 5 | **SQL Validator** | Validates SQL via EXPLAIN, auto-fixes syntax errors |
@@ -102,6 +102,7 @@ genie-app/
 │   ├── app/
 │   │   ├── main.py               # FastAPI app, routes, CORS, session endpoints
 │   │   ├── compound_ai.py        # Compound AI pipeline (7 stages + session mgmt)
+│   │   ├── schema_retriever.py   # 6-level hybrid schema retrieval engine
 │   │   ├── database.py           # SQLite connection, schema, dataset loading
 │   │   ├── nl_to_sql.py          # NL-to-SQL engine (LLM + fallback)
 │   │   ├── semantic_layer.py     # Semantic layer (metadata, glossary, metrics)
