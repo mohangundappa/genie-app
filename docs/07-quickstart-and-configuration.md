@@ -21,7 +21,8 @@ poetry run fastapi dev app/main.py --port 8000
 The backend will:
 - Create a `genie.db` SQLite database file
 - Load all 4 sample datasets (world_countries, sales_orders, employees, product_inventory)
-- Initialize the semantic layer with metadata for all datasets (column descriptions, glossary, metrics, dimensions, filters, joins, trusted queries)
+- Initialize the semantic layer with metadata for all datasets (column descriptions, glossary, metrics, dimensions, filters, joins, trusted queries, instructions)
+- Initialize **feedback and benchmarking** tables (query_feedback, benchmark_cases, benchmark_runs) and seed 20 benchmark test cases
 - Auto-scan categorical columns and build the **value dictionary** (~1000 entries)
 - Auto-profile all columns and build **column statistics** (~52 profiles)
 - Initialize the **usage patterns** table for query history learning
@@ -128,6 +129,18 @@ The app works without an API key using a rule-based pattern matcher. You'll see 
 | `DELETE /api/semantic/trusted-queries?question=X` | — | Remove trusted query |
 | `GET /api/semantic/value-dictionary?table_name=X` | — | Auto-scanned column values with frequency (optional table filter) |
 | `GET /api/semantic/column-stats?table_name=X` | — | Auto-profiled column statistics (optional table filter) |
+| `GET /api/semantic/instructions?dataset_name=X` | — | Per-space instructions (optional dataset filter) |
+| `POST /api/semantic/instructions` | `{"instruction": "...", "scope": "global", ...}` | Add/update instruction |
+| `DELETE /api/semantic/instructions/{id}` | — | Remove instruction |
+| `POST /api/feedback` | `{"query_id": "...", "question": "...", "vote": "up"}` | Submit feedback (up/down) |
+| `GET /api/feedback/stats` | — | Feedback accuracy stats and recent entries |
+| `GET /api/feedback?limit=100` | — | List all feedback entries |
+| `GET /api/benchmark/cases?dataset_name=X&difficulty=Y` | — | List benchmark test cases |
+| `POST /api/benchmark/cases` | `{"question": "...", "expected_sql": "...", ...}` | Add/update benchmark case |
+| `DELETE /api/benchmark/cases?question=X` | — | Remove benchmark case |
+| `POST /api/benchmark/run?dataset_name=X&difficulty=Y` | — | Run benchmark suite |
+| `GET /api/benchmark/history?limit=20` | — | Benchmark run history |
+| `GET /api/benchmark/runs/{id}` | — | Benchmark run detail with per-case results |
 
 ---
 

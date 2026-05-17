@@ -4,7 +4,7 @@
 
 A semantic layer sits between raw data schemas and the NL-to-SQL engine. It provides **business context** that helps the LLM understand what columns mean, how tables relate, and what common questions look like — bridging the gap between technical database schemas and natural language.
 
-In Databricks Genie, this role is played by **Unity Catalog** (column descriptions, tags, lineage) and **Trusted Assets** (curated queries, instructions). Data Genie implements an equivalent system using 7 dedicated SQLite tables.
+In Databricks Genie, this role is played by **Unity Catalog** (column descriptions, tags, lineage) and **Trusted Assets** (curated queries, instructions). Data Genie implements an equivalent system using 8 dedicated SQLite tables (7 core + 1 instructions table).
 
 ---
 
@@ -27,9 +27,10 @@ User Question
 │ includes:            │◀─────│ semantic_dimensions      │
 │ - Column meanings    │◀─────│ semantic_filters         │
 │ - Business terms     │◀─────│ semantic_joins           │
-│ - Metric formulas    │      └──────────────────────────┘
+│ - Metric formulas    │◀─────│ semantic_instructions    │
 │ - Filter shortcuts   │
 │ - Join paths         │
+│ - Instructions       │
 └──────────┬───────────┘
            │
            ▼
@@ -41,7 +42,7 @@ User Question
 
 ---
 
-## Database Schema (7 Tables)
+## Database Schema (7+1 Tables)
 
 ### 1. `semantic_column_descriptions` (50 rows seeded)
 
@@ -135,9 +136,27 @@ Curated SQL for common questions — matched before the LLM is called.
 | `sql_query` | TEXT | Exact SQL to execute |
 | `description` | TEXT | What the query returns |
 | `table_name` | TEXT | Primary table involved |
-| `is_parameterized` | INTEGER | Whether the query has parameters (future use) |
+| `is_parameterized` | INTEGER | Whether the query uses `{param}` template syntax |
 
 **Trade-off**: Trusted queries use fuzzy keyword matching (60% keyword overlap threshold). This is fast and simple but may produce false positives for short questions or miss semantically equivalent but lexically different phrasings. Semantic embedding-based matching would be more accurate but requires a vector store.
+
+**Parameterized queries**: When `is_parameterized = 1`, the `sql_query` field contains `{param}` placeholders (e.g., `WHERE region = '{region}'`). The engine auto-extracts parameter values from the user's natural language question via regex matching against known column values, then substitutes them into the template with single-quote escaping for SQL injection prevention.
+
+### 8. `semantic_instructions` (0 rows by default, user-managed)
+
+Per-space text rules that are injected into the SQL generator's LLM prompt to guide SQL generation.
+
+| Column | Type | Purpose |
+|--------|------|--------|
+| `id` | INTEGER | Auto-incrementing primary key |
+| `instruction` | TEXT | The rule text (e.g., "Revenue means net revenue after refunds") |
+| `scope` | TEXT | "global" or "dataset" — determines applicability |
+| `dataset_name` | TEXT | Which dataset this applies to (NULL for global) |
+| `priority` | INTEGER | Ordering priority (higher = applied first) |
+| `is_active` | INTEGER | Whether the instruction is currently active (1/0) |
+| `created_at` | TIMESTAMP | When the instruction was created |
+
+**Trade-off**: Instructions are plain text injected into the LLM prompt, not structured rules. This is flexible (any natural language guidance works) but unverifiable — the LLM may interpret instructions differently than intended. A production system might add validation or test-against-benchmark verification for new instructions.
 
 ---
 
@@ -175,8 +194,13 @@ The `semantic_` prefix serves as a namespace to clearly separate metadata tables
 
 ### 2. Backend API (`main.py`)
 
-- **11 new endpoints** under `/api/semantic/*` for reading and managing all 7 semantic entity types.
+- **14 endpoints** under `/api/semantic/*` for reading and managing all 8 semantic entity types (7 core + instructions).
 - **`init_semantic_layer()`**: Called during app startup (lifespan event) to create tables and seed defaults if empty.
+
+### 4. Feedback & Benchmarking (`feedback.py`)
+
+- **`init_feedback_tables()`**: Called during app startup to create `query_feedback`, `benchmark_cases`, and `benchmark_runs` tables, and seed 20 default benchmark test cases.
+- **12 endpoints** under `/api/feedback/*` and `/api/benchmark/*` for submitting feedback, viewing stats, managing benchmark cases, running benchmarks, and viewing run history.
 
 ### 3. Frontend (`SemanticLayer.tsx`)
 
@@ -196,7 +220,8 @@ The `semantic_` prefix serves as a namespace to clearly separate metadata tables
 | Metric definitions | Not built-in (dbt metrics layer) | `semantic_metrics` with SQL expressions |
 | Data lineage | Automatic lineage tracking | Not implemented |
 | Access controls | Fine-grained RBAC | Not implemented |
-| Trusted assets | Admin-curated queries + instructions | `semantic_trusted_queries` with fuzzy matching |
+| Trusted assets | Admin-curated queries + instructions | `semantic_trusted_queries` with fuzzy matching + parameterized `{param}` template syntax |
+| Instructions | Per-space text rules for NL-to-SQL guidance | `semantic_instructions` with global/dataset scope and priority ordering |
 | Discovery | Search across all catalog objects | Search bar in Semantic sidebar tab |
 | Auto-profiling | Statistical profiling of columns | `semantic_column_stats` table with auto-profiled distinct counts, min/max, null rates, cardinality |
 | Value dictionaries | Categorical value lookup for filter matching | `semantic_value_dictionary` table with auto-scanned column values and frequency counts |
@@ -213,7 +238,8 @@ The `semantic_` prefix serves as a namespace to clearly separate metadata tables
 | Dimensions | 18 | "Continent" = `continent` column on `world_countries` |
 | Filters | 17 | "Active Employees" = `employment_status = 'Active'` |
 | Joins | 1 | `sales_orders.product_name = product_inventory.product_name` (LEFT JOIN) |
-| Trusted queries | 12 | "What are the top 10 countries by GDP?" → `SELECT country, gdp_usd_billion FROM world_countries ORDER BY gdp_usd_billion DESC LIMIT 10` |
+| Trusted queries | 12 | "What are the top 10 countries by GDP?" → `SELECT country, gdp_usd_billion FROM world_countries ORDER BY gdp_usd_billion DESC LIMIT 10` (includes parameterized templates) |
+| Instructions | 0 (user-managed) | "Revenue means net revenue after refunds" (global scope), "Always use ROUND() for currency" (dataset scope) |
 | Value dictionary | ~1062 | "Electronics" in `product_inventory.category` (frequency: 14) — auto-scanned on startup |
 | Column stats | ~52 | `employees.salary`: distinct=147, min=30256.59, max=197641.0, null=0, categorical=false — auto-profiled on startup |
 | Usage patterns | 0 (grows) | Tracks which tables/columns are queried together — builds up over time |
@@ -276,7 +302,7 @@ Records which tables and columns are used together in executed queries. Used for
 1. **Admin UI**: Build a dedicated admin panel for managing semantic metadata (currently API-only for writes, sidebar for reads).
 2. **Auto-discovery**: Use LLM to automatically generate column descriptions and glossary entries from data samples.
 3. **Transformer embeddings**: Replace TF-IDF with `all-MiniLM-L6-v2` or similar for better semantic matching at scale.
-4. **Parameterized trusted queries**: Support templates like `SELECT ... WHERE region = '{region}'` with parameter extraction from user questions.
+4. ~~**Parameterized trusted queries**~~: **DONE** — Template syntax `{param}` with auto-extraction from natural language and SQL injection prevention via single-quote escaping.
 5. **Metric composition**: Allow metrics to reference other metrics (e.g., "Profit Margin" = "Total Profit" / "Total Revenue").
 6. **Version history**: Track changes to semantic metadata over time for audit and rollback.
 7. **Import/export**: Support YAML/JSON import/export of semantic layer definitions for version control and migration.

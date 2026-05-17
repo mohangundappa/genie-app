@@ -71,7 +71,21 @@ User: "Show total revenue by product category"
   → Returns curated SQL instantly (no LLM call)
 ```
 
-**Trade-off**: Fuzzy matching is simple but not perfect. It may miss semantically similar but lexically different questions ("What do we sell the most of?" won't match "total sales by category"). A semantic embedding-based matcher would be more accurate but adds complexity and latency.
+#### Parameterized Trusted Queries
+
+Trusted queries support a `{param}` template syntax for queries that vary by a single dimension. Parameters are auto-extracted from the user's natural language question via regex matching against known column values.
+
+```
+Template: "SELECT region, SUM(total_amount) FROM sales_orders WHERE region = '{region}' GROUP BY region"
+User: "Show revenue in Asia"
+  → Extracts region="Asia" from question
+  → Substitutes into template: WHERE region = 'Asia'
+  → Returns parameterized result instantly
+```
+
+**SQL injection prevention**: Parameter values are sanitized by escaping single quotes (`'` → `''`) before substitution into the SQL template. This prevents crafted inputs like `East' UNION SELECT ...` from breaking out of the string literal.
+
+**Trade-off**: Fuzzy matching is simple but not perfect. It may miss semantically similar but lexically different questions ("What do we sell the most of?" won't match "total sales by category"). A semantic embedding-based matcher would be more accurate but adds complexity and latency. Parameterized queries use regex-based extraction rather than proper SQL parameterized statements (`?` placeholders), which is less robust but simpler to implement with dynamic template syntax.
 
 ### 2. Prompt Enrichment (During LLM Call)
 
@@ -83,13 +97,15 @@ When a question reaches the LLM, the system prompt includes a `## Semantic Layer
 - **Dimension columns**: Common GROUP BY candidates per table
 - **Pre-defined filters**: Ready-made WHERE clauses (e.g., "Active Employees" = `employment_status = 'Active'`)
 - **Join relationships**: How to correctly join tables (e.g., `sales_orders.product_name = product_inventory.product_name`)
+- **Per-space instructions**: Active text rules (global or dataset-scoped) that guide SQL generation (e.g., "Revenue means net revenue after refunds", "Always use ROUND() for currency values")
 
-The LLM prompt includes 3 additional rules instructing it to:
+The LLM prompt includes additional rules instructing it to:
 - Map business terms to the correct columns using the glossary
 - Use pre-defined filter expressions when applicable
 - Prefer trusted query patterns when they closely match
+- Follow all active per-space instructions
 
-**Trade-off**: Including the full semantic context increases prompt size by ~500-800 tokens. For our 4-table schema this is acceptable, but for a 100-table enterprise schema, the semantic context would need to be filtered by relevance (e.g., only include metadata for tables mentioned in the question).
+**Trade-off**: Including the full semantic context increases prompt size by ~500-800 tokens. For our 4-table schema this is acceptable, but for a 100-table enterprise schema, the semantic context would need to be filtered by relevance (e.g., only include metadata for tables mentioned in the question). Per-space instructions add further tokens but are typically short text rules (~10-50 tokens each).
 
 See [08-semantic-layer.md](./08-semantic-layer.md) for full architecture details.
 
@@ -162,8 +178,9 @@ The NL-to-SQL engine does NOT use parameterized queries for the generated SQL (s
 1. **SELECT-only enforcement**: `execute_query()` checks that the SQL starts with `SELECT` or `WITH` before executing. This prevents data modification.
 2. **LLM instruction**: The system prompt explicitly instructs the model to only generate SELECT queries.
 3. **SQLite's single-statement execution**: `conn.execute()` only runs one statement, preventing multi-statement injection (`;DROP TABLE...` won't work).
+4. **Parameterized query sanitization**: For trusted queries with `{param}` templates, user-supplied parameter values are sanitized by escaping single quotes (`'` → `''`) before string substitution. This prevents breakout from string literals in the SQL template.
 
-**Trade-off**: This is defense-in-depth but not bulletproof. A production system should use a sandboxed query execution environment with a read-only database connection, query timeouts, and row limits. For a demo/POC, the current approach provides reasonable safety.
+**Trade-off**: This is defense-in-depth but not bulletproof. The parameterized query sanitization escapes single quotes but does not use proper SQL `?` placeholders (which would be more robust). A production system should use a sandboxed query execution environment with a read-only database connection, query timeouts, and row limits. For a demo/POC, the current approach provides reasonable safety.
 
 ### API Key Storage
 
@@ -203,3 +220,4 @@ The compound AI pipeline now includes a **6-level hybrid schema retriever** (`sc
 5. **Auto-generated semantic metadata**: Use LLM to automatically generate column descriptions and glossary entries from data samples, reducing manual curation effort.
 6. **Adaptive signal weights**: Learn optimal signal weights from user feedback (correct/incorrect query results) rather than using fixed weights.
 7. **Cross-table usage patterns**: Track which tables are frequently queried together to improve JOIN suggestions.
+8. **Proper SQL parameterization**: Replace string substitution in parameterized trusted queries with SQLite `?` placeholders for stronger SQL injection prevention.

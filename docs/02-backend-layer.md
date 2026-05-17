@@ -47,11 +47,15 @@
 - **Separate system tables** (`query_history`, `settings`) and **semantic layer tables** (`semantic_*`) from data tables. The `get_all_tables()` function explicitly excludes both system and semantic tables so the LLM only sees relevant data schemas.
 - **TEXT dates** (ISO 8601 format) instead of SQLite's lack of a native DATE type. This simplifies date filtering in generated SQL (`WHERE order_date >= '2024-01-01'`).
 - **No foreign keys between datasets** — each dataset is self-contained. This avoids JOIN complexity in the NL-to-SQL layer, which is the hardest part of text-to-SQL.
-- **Semantic layer stored in SQLite** — 7 dedicated `semantic_*` tables store column descriptions, glossary terms, metrics, dimensions, filters, joins, and trusted queries. Co-locating this metadata with the data ensures consistency and simplifies deployment (single DB file). See [08-semantic-layer.md](./08-semantic-layer.md) for details.
+- **Semantic layer stored in SQLite** — 7 dedicated `semantic_*` tables store column descriptions, glossary terms, metrics, dimensions, filters, joins, and trusted queries, plus 1 instructions table (`semantic_instructions`). Co-locating this metadata with the data ensures consistency and simplifies deployment (single DB file). See [08-semantic-layer.md](./08-semantic-layer.md) for details.
 - **Schema retrieval tables** — 3 additional tables support the 6-level hybrid schema retriever:
   - `semantic_value_dictionary` — auto-scanned categorical column values (e.g., "Electronics" in `product_category`) for Level 1 value matching.
   - `semantic_column_stats` — auto-profiled column statistics (distinct count, min/max, null rate, cardinality) for Level 2 column profiling.
   - `schema_usage_patterns` — records co-occurring table/column pairs from executed queries for Level 5 usage-based boosting.
+- **Quality tables** — 3 tables support the feedback loop and benchmarking:
+  - `query_feedback` — stores thumbs up/down votes per response with optional comments, linked by `query_id`.
+  - `benchmark_cases` — defines expected question→SQL pairs (20 seeded) for automated accuracy testing.
+  - `benchmark_runs` — records each benchmark execution with per-case pass/fail details, accuracy %, and duration.
 
 ---
 
