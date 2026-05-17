@@ -17,13 +17,28 @@ from app.database import (
     save_query_history,
     set_setting,
 )
-from app.models import AskRequest, AskResponse, SettingsUpdate
+from app.models import (
+    AskRequest, AskResponse, SettingsUpdate,
+    FeedbackRequest, InstructionRequest, BenchmarkCaseRequest,
+)
 from app.nl_to_sql import nl_to_sql
 from app.compound_ai import (
     run_compound_pipeline,
     init_conversation_tables,
     get_all_sessions,
     get_conversation_history,
+)
+from app.feedback import (
+    init_feedback_tables,
+    submit_feedback,
+    get_feedback_stats,
+    get_all_feedback,
+    get_benchmark_cases,
+    upsert_benchmark_case,
+    delete_benchmark_case,
+    run_benchmark,
+    get_benchmark_history,
+    get_benchmark_run_detail,
 )
 from app.schema_retriever import (
     init_value_dictionary,
@@ -48,6 +63,9 @@ from app.semantic_layer import (
     delete_glossary_entry,
     delete_metric,
     delete_trusted_query,
+    get_instructions,
+    upsert_instruction,
+    delete_instruction,
 )
 
 load_dotenv()
@@ -58,6 +76,7 @@ async def lifespan(app: FastAPI):
     init_db()
     init_semantic_layer()
     init_conversation_tables()
+    init_feedback_tables()
     init_value_dictionary()
     init_column_stats()
     init_usage_patterns()
@@ -144,6 +163,7 @@ async def ask_question(request: AskRequest):
         needs_clarification=result["needs_clarification"],
         clarification=result["clarification"],
         intent=result["intent"],
+        query_id=result.get("query_id", ""),
     )
 
 
@@ -326,3 +346,108 @@ async def add_trusted_query(payload: dict):
 async def remove_trusted_query(question: str):
     delete_trusted_query(question)
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Instructions endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/semantic/instructions")
+async def get_semantic_instructions(dataset_name: str | None = None):
+    return {"instructions": get_instructions(dataset_name)}
+
+
+@app.post("/api/semantic/instructions")
+async def add_instruction(payload: InstructionRequest):
+    upsert_instruction(
+        instruction=payload.instruction,
+        scope=payload.scope,
+        dataset_name=payload.dataset_name,
+        priority=payload.priority,
+        is_active=payload.is_active,
+    )
+    return {"status": "ok"}
+
+
+@app.delete("/api/semantic/instructions/{instruction_id}")
+async def remove_instruction(instruction_id: int):
+    delete_instruction(instruction_id)
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Feedback endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/feedback")
+async def post_feedback(payload: FeedbackRequest):
+    if payload.vote not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="Vote must be 'up' or 'down'")
+    submit_feedback(
+        query_id=payload.query_id,
+        question=payload.question,
+        vote=payload.vote,
+        sql_query=payload.sql_query,
+        session_id=payload.session_id,
+        comment=payload.comment,
+    )
+    return {"status": "ok"}
+
+
+@app.get("/api/feedback/stats")
+async def feedback_stats():
+    return get_feedback_stats()
+
+
+@app.get("/api/feedback")
+async def list_feedback(limit: int = 100):
+    return {"feedback": get_all_feedback(limit)}
+
+
+# ---------------------------------------------------------------------------
+# Benchmark endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/benchmark/cases")
+async def list_benchmark_cases(dataset_name: str | None = None,
+                               difficulty: str | None = None):
+    return {"cases": get_benchmark_cases(dataset_name, difficulty)}
+
+
+@app.post("/api/benchmark/cases")
+async def add_benchmark_case(payload: BenchmarkCaseRequest):
+    upsert_benchmark_case(
+        question=payload.question,
+        expected_sql=payload.expected_sql,
+        expected_result_pattern=payload.expected_result_pattern,
+        dataset_name=payload.dataset_name,
+        tags=payload.tags,
+        difficulty=payload.difficulty,
+    )
+    return {"status": "ok"}
+
+
+@app.delete("/api/benchmark/cases")
+async def remove_benchmark_case(question: str):
+    delete_benchmark_case(question)
+    return {"status": "ok"}
+
+
+@app.post("/api/benchmark/run")
+async def run_benchmark_suite(dataset_name: str | None = None,
+                              difficulty: str | None = None):
+    result = run_benchmark(dataset_name, difficulty)
+    return result
+
+
+@app.get("/api/benchmark/history")
+async def benchmark_history(limit: int = 20):
+    return {"history": get_benchmark_history(limit)}
+
+
+@app.get("/api/benchmark/runs/{run_id}")
+async def benchmark_run_detail(run_id: int):
+    detail = get_benchmark_run_detail(run_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Benchmark run not found")
+    return detail

@@ -101,5 +101,61 @@ export function useApi() {
         session_id: string;
         messages: { role: string; content: string; sql: string | null }[];
       }>(`/api/sessions/${sessionId}`),
+
+    // Feedback
+    submitFeedback: (data: {
+      query_id: string;
+      question: string;
+      vote: string;
+      sql_query?: string;
+      session_id?: string;
+      comment?: string;
+    }) =>
+      apiFetch<{ status: string }>("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    getFeedbackStats: () =>
+      apiFetch<import("../types").FeedbackStats>("/api/feedback/stats"),
+
+    // Instructions
+    getInstructions: () =>
+      apiFetch<{ instructions: import("../types").SemanticInstruction[] }>(
+        "/api/semantic/instructions"
+      ),
+
+    addInstruction: (data: {
+      instruction: string;
+      scope?: string;
+      dataset_name?: string;
+      priority?: number;
+    }) =>
+      apiFetch<{ status: string }>("/api/semantic/instructions", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+
+    deleteInstruction: (id: number) =>
+      apiFetch<{ status: string }>(`/api/semantic/instructions/${id}`, {
+        method: "DELETE",
+      }),
+
+    // Benchmark
+    getBenchmarkCases: (datasetName?: string) =>
+      apiFetch<{ cases: import("../types").BenchmarkCase[] }>(
+        `/api/benchmark/cases${datasetName ? `?dataset_name=${datasetName}` : ""}`
+      ),
+
+    runBenchmark: (datasetName?: string) =>
+      apiFetch<import("../types").BenchmarkRunResult>(
+        `/api/benchmark/run${datasetName ? `?dataset_name=${datasetName}` : ""}`,
+        { method: "POST" }
+      ),
+
+    getBenchmarkHistory: () =>
+      apiFetch<{ history: import("../types").BenchmarkRunSummary[] }>(
+        "/api/benchmark/history"
+      ),
   };
 }

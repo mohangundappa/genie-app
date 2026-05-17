@@ -18,6 +18,7 @@ import json
 import os
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from openai import OpenAI
 from app.database import get_db, get_schema_for_prompt, get_setting, execute_query
@@ -30,6 +31,7 @@ from app.semantic_layer import (
     get_dimensions,
     get_filters,
     get_joins,
+    get_instructions_for_prompt,
 )
 from app.schema_retriever import (
     hybrid_retrieve_schema,
@@ -73,6 +75,7 @@ class PipelineContext:
     needs_clarification: bool = False
 
     # Pipeline metadata
+    query_id: str = ""
     stages: list[PipelineStage] = field(default_factory=list)
     total_duration_ms: float = 0.0
     error: str | None = None
@@ -363,6 +366,8 @@ You have access to these tables:
 ## Semantic Layer (filtered for this question)
 {semantic_context}
 
+{instructions_context}
+
 {conversation_context}
 
 Rules:
@@ -378,6 +383,7 @@ Rules:
 10. Map business terms using the glossary and metrics above.
 11. Use pre-defined filter expressions when they match user intent.
 12. If a trusted SQL pattern matches, prefer it.
+13. Follow all Instructions rules above strictly.
 
 Respond with JSON:
 {{"sql": "<query>", "explanation": "<1-2 sentences>", "chart_type": "<bar|line|pie|area|scatter|none>", "x_axis": "<col>", "y_axis": ["<col>"], "chart_title": "<title>"}}"""
@@ -416,9 +422,12 @@ def generate_sql(ctx: PipelineContext, client: OpenAI | None) -> None:
         ctx.stages.append(stage)
         return
 
+    instructions_text = get_instructions_for_prompt(ctx.relevant_tables)
+
     prompt = SQL_GENERATOR_PROMPT.format(
         schema=schema,
         semantic_context=ctx.semantic_context,
+        instructions_context=instructions_text,
         conversation_context=conv_context,
     )
 
@@ -809,7 +818,7 @@ def run_compound_pipeline(question: str, session_id: str | None = None) -> dict:
     client = _get_client()
 
     # Initialize context
-    ctx = PipelineContext(question=question, session_id=session_id)
+    ctx = PipelineContext(question=question, session_id=session_id, query_id=str(uuid.uuid4())[:8])
 
     # Load conversation history if session exists
     if session_id:
@@ -946,6 +955,7 @@ def _build_response(ctx: PipelineContext, query_result: dict | None) -> dict:
 
     return {
         # Backward-compatible fields
+        "query_id": ctx.query_id,
         "question": ctx.question,
         "sql_query": ctx.sql,
         "columns": query_result["columns"] if query_result else [],
@@ -978,6 +988,7 @@ def _build_clarification_response(ctx: PipelineContext) -> dict:
         })
 
     return {
+        "query_id": ctx.query_id,
         "question": ctx.question,
         "sql_query": "",
         "columns": [],

@@ -42,6 +42,7 @@ export interface AskResponse {
   needs_clarification: boolean;
   clarification: string | null;
   intent: Record<string, unknown>;
+  query_id: string;
 }
 
 export interface SuggestedQuestion {
@@ -130,6 +131,78 @@ export interface SemanticTrustedQuery {
   is_parameterized: number;
 }
 
+export interface SemanticInstruction {
+  id: number;
+  instruction: string;
+  scope: string;
+  dataset_name: string | null;
+  priority: number;
+  is_active: number;
+  created_at: string;
+}
+
+export interface FeedbackStats {
+  total: number;
+  upvotes: number;
+  downvotes: number;
+  accuracy_pct: number;
+  recent: FeedbackItem[];
+}
+
+export interface FeedbackItem {
+  id: number;
+  query_id: string;
+  session_id: string | null;
+  question: string;
+  sql_query: string | null;
+  vote: string;
+  comment: string | null;
+  created_at: string;
+}
+
+export interface BenchmarkCase {
+  id: number;
+  question: string;
+  expected_sql: string;
+  expected_result_pattern: string | null;
+  dataset_name: string | null;
+  tags: string | null;
+  difficulty: string;
+  created_at: string;
+}
+
+export interface BenchmarkRunSummary {
+  id: number;
+  run_at: string;
+  total_cases: number;
+  passed: number;
+  failed: number;
+  accuracy_pct: number;
+  duration_ms: number;
+}
+
+export interface BenchmarkRunResult {
+  total: number;
+  passed: number;
+  failed: number;
+  accuracy_pct: number;
+  duration_ms: number;
+  details: BenchmarkCaseResult[];
+}
+
+export interface BenchmarkCaseResult {
+  question: string;
+  dataset: string | null;
+  difficulty: string | null;
+  tags: string | null;
+  passed: boolean;
+  checks: { check: string; passed: boolean; detail: string }[];
+  generated_sql?: string;
+  expected_row_count?: number;
+  pipeline_row_count?: number;
+  is_trusted?: boolean;
+}
+
 export interface SemanticLayerSummary {
   column_descriptions: SemanticColumnDescription[];
   glossary: SemanticGlossaryEntry[];
@@ -138,4 +211,5 @@ export interface SemanticLayerSummary {
   filters: SemanticFilter[];
   joins: SemanticJoin[];
   trusted_queries: SemanticTrustedQuery[];
+  instructions: SemanticInstruction[];
 }
