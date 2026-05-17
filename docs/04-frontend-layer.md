@@ -61,10 +61,15 @@ We chose the chat-based approach because it aligns with the Databricks Genie men
 ### Component breakdown
 
 #### `App.tsx` — Application Shell
-- **Responsibility**: Layout (sidebar + main content), routing state, message management, pipeline stage viewer.
-- **Trade-off**: All state lives here (messages, input, loading, sidebar, settings). This is fine for the current scale but would need extraction to a context/store if we added features like multi-conversation, collaborative editing, or persistent sessions.
+- **Responsibility**: Layout (sidebar + main content), routing state, message management, pipeline stage viewer, feedback buttons, quality panel.
+- **Trade-off**: All state lives here (messages, input, loading, sidebar, settings, feedback state, quality panel). This is fine for the current scale but would need extraction to a context/store if we added features like multi-conversation, collaborative editing, or persistent sessions.
 - **Pipeline Viewer**: Expandable panel showing all 8 compound AI stages with timing. Clicking the `schema_retriever` stage reveals hybrid retrieval details: table scores with confidence values, signal badges (keyword, entity, value_dictionary, embedding_search), value match counts, and filter hints.
 - **SchemaRetrieverDetails component**: Renders the retrieval method summary, per-table scores, signal type badges, and amber-highlighted value match indicators. This provides full transparency into which retrieval signals influenced table selection.
+- **FeedbackButtons**: Thumbs up/down buttons rendered below each AI response. Upvotes submit immediately via `POST /api/feedback`; downvotes show a comment input first, deferring submission until the user presses Enter or clicks away (blur). Each response is tracked by `query_id`. Once voted, both buttons are disabled and a "Thanks!" message is shown.
+- **QualityPanel**: A sidebar tab ("Quality") with 3 sub-tabs:
+  - **Feedback**: Accuracy percentage, upvote/downvote counts, recent feedback list with questions, votes, and comments.
+  - **Benchmark**: "Run Benchmark (N cases)" button, benchmark run history with per-run accuracy and duration.
+  - **Instructions**: List of active per-space instructions with scope badges (global/dataset), priority, and delete buttons. Includes an add form for new instructions.
 
 #### `ChartView.tsx` — Visualization Engine
 - **Responsibility**: Renders bar, line, pie, area, and scatter charts from data + config.
@@ -145,8 +150,9 @@ The application state is simple:
 - `messages[]` — conversation history
 - `input` — current text input
 - `loading` — request in progress
-- `sidebarOpen`, `sidebarTab` ("datasets" | "history" | "semantic"), `settingsOpen` — UI state
+- `sidebarOpen`, `sidebarTab` ("datasets" | "history" | "semantic" | "quality"), `settingsOpen` — UI state
 - `activeView` — table vs. chart toggle
+- `voted`, `showComment` — per-message feedback state (tracked per `query_id`)
 
 All state is local to `App.tsx` and flows down via props. No component needs to update state in a sibling without going through the parent.
 
@@ -171,6 +177,8 @@ All state is local to `App.tsx` and flows down via props. No component needs to 
 3. **Configurable base URL**: Reads from `VITE_API_URL` environment variable. This allows the same frontend code to point to localhost (development) or the deployed backend (production) without code changes.
 
 4. **Semantic layer methods**: The hook includes `getSemanticLayer()` (full summary), `getSemanticColumns()`, `getSemanticMetrics()`, `getSemanticGlossary()`, and `getSemanticTrustedQueries()` — each with optional `tableName` filtering. These power the Semantic sidebar tab.
+
+5. **Quality methods**: `submitFeedback()`, `getFeedbackStats()`, `getInstructions()`, `addInstruction()`, `deleteInstruction()`, `getBenchmarkCases()`, `runBenchmark()`, `getBenchmarkHistory()` — power the Quality panel's 3 sub-tabs.
 
 ---
 
