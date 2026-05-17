@@ -178,16 +178,16 @@ Databricks Genie is part of the **AI/BI** product suite, built on a **compound A
 
 ### Compound AI Pipeline Detail
 
-| Stage | Component | Method | Purpose |
-|-------|-----------|--------|---------|
-| 1 | **Trusted Query Fast Path** | Fuzzy keyword matching (60% threshold) | Instantly return curated SQL for known questions — bypasses entire LLM pipeline |
-| 2 | **Intent Classifier** | LLM-based (7 intent types) + keyword fallback | Categorizes question as aggregation, ranking, trend, comparison, lookup, filter, or distribution |
-| 3 | **Schema Retriever** | Table/column scoring + entity extraction | Finds relevant tables instead of dumping entire schema to LLM |
-| 4 | **Context Assembler** | Semantic layer filtering | Pulls matching glossary, metrics, dimensions, filters, joins — scoped to relevant tables |
-| 5 | **SQL Generator** | LLM with focused context + pattern matcher fallback | Generates SQL using filtered schema + semantic context + conversation history |
-| 6 | **SQL Validator** | EXPLAIN check + auto-fix loop (2 retries) | Validates generated SQL before execution; LLM auto-fixes if invalid |
-| 7 | **Result Summarizer** | LLM-generated NL summary | Produces natural language summary with key insights from query results |
-| 8 | **Follow-up Suggester** | Heuristic + LLM-based | Suggests related questions based on intent type and query results |
+| Stage | Component | Method | Purpose | How It Works (Example) |
+|-------|-----------|--------|---------|----------------------|
+| 1 | **Trusted Query Fast Path** | Fuzzy keyword matching (60% threshold) | Instantly return curated SQL for known questions — bypasses entire LLM pipeline | User asks *"What is total revenue?"* → fuzzy-matches trusted query *"total revenue"* (similarity 0.85) → returns pre-built `SELECT SUM(total_amount) FROM sales_orders` instantly without calling LLM |
+| 2 | **Intent Classifier** | LLM-based (7 intent types) + keyword fallback | Categorizes question as aggregation, ranking, trend, comparison, lookup, filter, or distribution | User asks *"Which country has the highest GDP?"* → LLM classifies intent as **ranking** → extracts entities: `country`, `GDP` → keyword fallback detects "highest" as ranking signal if LLM unavailable |
+| 3 | **Schema Retriever** | Table/column scoring + entity extraction | Finds relevant tables instead of dumping entire schema to LLM | For intent entities `[country, GDP]` → scores all 4 tables → `world_economics` scores highest (matches "country", "gdp") → returns only `world_economics` schema with columns `country, continent, gdp, population, ...` instead of all 4 table schemas |
+| 4 | **Context Assembler** | Semantic layer filtering | Pulls matching glossary, metrics, dimensions, filters, joins — scoped to relevant tables | For table `world_economics` → pulls glossary entry *"GDP = Gross Domestic Product, column: gdp"* + metric *"Total GDP = SUM(gdp)"* + dimension *"Country = GROUP BY country"* + filter *"Large Economies = gdp > 1000000000000"* → assembles focused context block |
+| 5 | **SQL Generator** | LLM with focused context + pattern matcher fallback | Generates SQL using filtered schema + semantic context + conversation history | Sends to LLM: schema (`world_economics` only) + semantic context (GDP glossary, metrics) + conversation history (last 5 turns) + question → LLM generates `SELECT country, gdp FROM world_economics ORDER BY gdp DESC LIMIT 1` |
+| 6 | **SQL Validator** | EXPLAIN check + auto-fix loop (2 retries) | Validates generated SQL before execution; LLM auto-fixes if invalid | Runs `EXPLAIN SELECT country, gdp FROM world_economics ORDER BY gdp DESC LIMIT 1` → SQLite returns query plan (valid) → proceeds to execute. If EXPLAIN fails (e.g., typo in column name), sends error back to LLM → LLM fixes the SQL → re-validates (up to 2 retries) |
+| 7 | **Result Summarizer** | LLM-generated NL summary | Produces natural language summary with key insights from query results | Query returns `[{country: "United States", gdp: 21427700000000}]` → LLM generates summary: *"The United States has the highest GDP at $21.4 trillion, leading all countries in the dataset."* |
+| 8 | **Follow-up Suggester** | Heuristic + LLM-based | Suggests related questions based on intent type and query results | Intent was **ranking** on `world_economics` → generates follow-ups: *"What are the top 5 countries by GDP?"*, *"How does GDP compare across continents?"*, *"What is the average GDP per capita?"* → displayed as clickable chips in the UI |
 
 ### Agentic Reasoning Features
 
